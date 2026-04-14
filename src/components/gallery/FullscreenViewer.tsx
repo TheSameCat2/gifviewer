@@ -2,6 +2,7 @@
 
 import { useState, useCallback } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { MediaRow, TagRow } from "@/lib/db/media";
 
@@ -193,9 +194,13 @@ export function FullscreenViewer({
             className="max-h-[85vh] max-w-full object-contain"
           />
         ) : (
-          <img
+          <Image
             src={mediaSrc}
             alt={item.filename}
+            width={item.width ?? 1600}
+            height={item.height ?? 900}
+            unoptimized
+            priority
             className="max-h-[85vh] max-w-full object-contain"
           />
         )}

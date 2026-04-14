@@ -1,4 +1,5 @@
 import Link from "next/link";
+import Image from "next/image";
 import { MediaRow } from "@/lib/db/media";
 
 interface MediaGridProps {
@@ -40,11 +41,13 @@ export function MediaGrid({ items, folderId }: MediaGridProps) {
                 preload="metadata"
               />
             ) : (
-              <img
+              <Image
                 src={thumbSrc}
                 alt={item.filename}
-                className="h-full w-full object-cover"
-                loading="lazy"
+                fill
+                unoptimized
+                sizes="(min-width: 1280px) 16vw, (min-width: 1024px) 20vw, (min-width: 768px) 25vw, 50vw"
+                className="object-cover"
               />
             )}
             {/* Overlay with filename */}

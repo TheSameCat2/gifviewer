@@ -179,6 +179,14 @@ function removeStaleMedia(
 }
 
 /**
+ * Determines if we're running in a Docker container based on environment.
+ * Docker deployments set DATA_ROOT to /data and MEDIA_ROOT to /media.
+ */
+function isDockerBuild(): boolean {
+  return process.env.DATA_ROOT === "/data" && process.env.MEDIA_ROOT === "/media";
+}
+
+/**
  * Recursively walks a directory and returns all file paths.
  */
 async function walkDir(
@@ -189,8 +197,8 @@ async function walkDir(
   let entries: fs.Dirent[];
   try {
     entries = await fs.promises.readdir(dirPath, { withFileTypes: true });
-  } catch {
-    return;
+  } catch (err) {
+    throw new Error(`Failed to read directory: ${dirPath}: ${err instanceof Error ? err.message : String(err)}`);
   }
 
   for (const entry of entries) {
@@ -252,6 +260,13 @@ export async function runFullScan(): Promise<ScanResult> {
     foldersAdded: 0,
     foldersRemoved: 0,
   };
+
+  // In local-default mode (non-Docker, non-production), ensure mediaRoot exists
+  // to avoid preflight failures in fresh local development environments
+  const useLocalDefaults = !isDockerBuild() && process.env.NODE_ENV !== "production";
+  if (useLocalDefaults) {
+    await fs.promises.mkdir(mediaRoot, { recursive: true });
+  }
 
   // Preflight: verify mediaRoot is accessible before doing any stale cleanup
   try {

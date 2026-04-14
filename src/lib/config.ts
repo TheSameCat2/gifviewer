@@ -1,5 +1,4 @@
 import path from "path";
-import fs from "fs";
 
 export interface AppConfig {
   appName: string;
@@ -7,12 +6,6 @@ export interface AppConfig {
   dataRoot: string;
   dbPath: string;
   thumbRoot: string;
-}
-
-function ensureDir(dir: string): void {
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
 }
 
 function resolvePath(val: string | undefined, fallback: string): string {
@@ -31,9 +24,12 @@ function isDockerBuild(): boolean {
  * Gets the project-local data directory for non-Docker development builds.
  * This prevents build-time errors when /data or /media don't exist.
  */
+function getWorkspaceRoot(): string {
+  return /* turbopackIgnore: true */ process.cwd();
+}
+
 function getLocalDataRoot(): string {
-  // Use project-local storage in development to avoid build-time errors
-  return path.resolve(process.cwd(), "data");
+  return path.resolve(getWorkspaceRoot(), "data");
 }
 
 export function loadConfig(): AppConfig {
@@ -45,7 +41,7 @@ export function loadConfig(): AppConfig {
     ? getLocalDataRoot()
     : resolvePath(process.env.DATA_ROOT, "/data");
   const mediaRoot = useLocalDefaults
-    ? path.resolve(process.cwd(), "media")
+    ? path.resolve(getWorkspaceRoot(), "media")
     : resolvePath(process.env.MEDIA_ROOT, "/media");
   const thumbRoot = resolvePath(process.env.THUMB_ROOT, path.join(dataRoot, "thumbnails"));
   const dbPath = process.env.DB_PATH
@@ -53,13 +49,6 @@ export function loadConfig(): AppConfig {
       ? process.env.DB_PATH
       : path.join(dataRoot, process.env.DB_PATH)
     : path.join(dataRoot, "gifviewer.db");
-
-  // Ensure required directories exist
-  ensureDir(dataRoot);
-  ensureDir(thumbRoot);
-  if (useLocalDefaults) {
-    ensureDir(mediaRoot);
-  }
 
   return {
     appName: process.env.APP_NAME ?? "GIF Viewer",
