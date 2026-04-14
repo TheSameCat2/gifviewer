@@ -90,11 +90,9 @@ export default async function GalleryPage({ searchParams }: PageProps) {
           <h1 className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50">
             {config.appName}
           </h1>
-          {!libraryExists && (
-            <div className="flex items-center gap-4">
-              <ScanLibraryButton />
-            </div>
-          )}
+          <div className="flex items-center gap-4">
+            <ScanLibraryButton currentFolder={selectedFolderId?.toString()} />
+          </div>
         </div>
       </header>
 

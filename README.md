@@ -1,27 +1,26 @@
 # GIF Viewer
 
-A Next.js application for viewing local GIF and image collections.
+A self-hosted media gallery for browsing mounted image and GIF collections via a web UI backed by SQLite.
 
-## Current Status
+## Features
 
-Foundation complete:
-- Next.js 16 with React 19 and TypeScript
-- better-sqlite3 database for metadata caching
-- sharp for image processing
-- Local file serving via mapped volumes (no cloud dependencies)
-- Docker/Unraid deployment ready
-
-Gallery and scanning features are not yet implemented.
+- **Library scanning** — walks the media root and caches folder/file metadata in SQLite, tracking additions, removals, and renames.
+- **Folder/subfolder browsing** — sidebar tree navigation and breadcrumb trail to explore any depth.
+- **Thumbnail previews** — generated on demand and cached on disk; grid view shows them instantly.
+- **Fullscreen viewer** — click any thumbnail to open it; navigate with on-screen controls.
+- **Star ratings and tags** — rate media 1–5 stars, add/remove text tags; changes persist in the DB.
+- **Move & reorder** — from the viewer, move media between folders and change order using the viewer controls.
+- **Docker/Unraid ready** — single image, health-checked, configurable via env vars.
 
 ## Environment Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `APP_NAME` | `GIF Viewer` | Application display name |
-| `MEDIA_ROOT` | `/media` (Docker) or `./media` (local) | Root folder for media files |
-| `DATA_ROOT` | `/data` (Docker) or `./data` (local) | Root folder for data (DB, thumbnails) |
-| `DB_PATH` | `{DATA_ROOT}/gifviewer.db` | Path to SQLite database |
-| `THUMB_ROOT` | `{DATA_ROOT}/thumbnails` | Path to thumbnail cache |
+| Variable    | Default                       | Description                                      |
+|-------------|-------------------------------|--------------------------------------------------|
+| `APP_NAME`  | `GIF Viewer`                  | Application display name in the header            |
+| `MEDIA_ROOT`| `/media` (Docker) / `./media` (local) | Root folder containing all media files |
+| `DATA_ROOT` | `/data` (Docker) / `./data` (local) | Root for DB and thumbnails          |
+| `DB_PATH`   | `{DATA_ROOT}/gifviewer.db`     | Path to the SQLite database                       |
+| `THUMB_ROOT`| `{DATA_ROOT}/thumbnails`      | Path to the thumbnail cache                      |
 
 ## Local Development
 
@@ -30,7 +29,7 @@ npm install
 npm run dev
 ```
 
-Place media files in the project-local `media/` folder. Data (database, thumbnails) is stored in `data/`.
+Place media in `media/` (or point `MEDIA_ROOT` elsewhere). Database and thumbnails land in `data/`.
 
 ## Docker / Unraid
 
@@ -40,10 +39,12 @@ docker compose up -d
 
 ### Volumes
 
-- `/media` — Your media files (read-write). Map to your media library folder.
-- `gifviewer-data` — Named volume for database and thumbnails. Persists across restarts.
+| Mount           | Purpose                                         |
+|-----------------|-------------------------------------------------|
+| `/media`        | Media library — **must be read-write** to enable move support |
+| `gifviewer-data` | Named volume for DB + thumbnails (persists)   |
 
-### Example Unraid Mount
+### Example Unraid docker run
 
 ```yaml
 volumes:
@@ -51,6 +52,8 @@ volumes:
   - gifviewer-data:/data
 ```
 
-### Health Check
+> **Note:** If the media root is mounted read-only, move and reorder operations will fail. Always use `rw` if you plan to move media through the UI.
 
-The container health check uses a Node.js-based probe (no curl required).
+## Tech Stack
+
+Next.js 16 · React 19 · TypeScript · better-sqlite3 · sharp
