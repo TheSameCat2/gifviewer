@@ -1,6 +1,7 @@
-import { open, stat } from "node:fs/promises";
+import { stat } from "node:fs/promises";
 import { rename, copyFile, unlink } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, createReadStream } from "node:fs";
+import { Readable } from "node:stream";
 import path from "node:path";
 import { NextResponse } from "next/server";
 import { getMediaById, updateMediaRating, getTagsForMedia, addMediaTag, removeMediaTag, updateMediaLocation, moveMediaOneStep } from "@/lib/db/media";
@@ -42,8 +43,7 @@ export async function GET(
     return new NextResponse("Not found", { status: 404 });
   }
 
-  const file = await open(filePath, "r");
-  const stream = file.readableWebStream();
+  const stream = Readable.toWeb(createReadStream(filePath));
 
   return new Response(stream as unknown as ReadableStream, {
     headers: {

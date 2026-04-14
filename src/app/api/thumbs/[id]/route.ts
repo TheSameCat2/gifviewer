@@ -1,4 +1,6 @@
-import { open, stat } from "node:fs/promises";
+import { stat } from "node:fs/promises";
+import { createReadStream } from "node:fs";
+import { Readable } from "node:stream";
 import path from "node:path";
 import { NextResponse } from "next/server";
 import { getMediaById } from "@/lib/db/media";
@@ -61,8 +63,7 @@ export async function GET(
       // thumb missing after generation — fall through to original
     }
     if (thumbStat?.isFile()) {
-      const thumbFile = await open(thumbPath, "r");
-      const stream = thumbFile.readableWebStream();
+      const stream = Readable.toWeb(createReadStream(thumbPath));
 
       return new Response(stream as unknown as ReadableStream, {
         headers: {
@@ -75,8 +76,7 @@ export async function GET(
   }
 
   // Fallback: stream original
-  const file = await open(filePath, "r");
-  const stream = file.readableWebStream();
+  const stream = Readable.toWeb(createReadStream(filePath));
 
   return new Response(stream as unknown as ReadableStream, {
     headers: {
