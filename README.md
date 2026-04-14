@@ -1,36 +1,56 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# GIF Viewer
 
-## Getting Started
+A Next.js application for viewing local GIF and image collections.
 
-First, run the development server:
+## Current Status
+
+Foundation complete:
+- Next.js 16 with React 19 and TypeScript
+- better-sqlite3 database for metadata caching
+- sharp for image processing
+- Local file serving via mapped volumes (no cloud dependencies)
+- Docker/Unraid deployment ready
+
+Gallery and scanning features are not yet implemented.
+
+## Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `APP_NAME` | `GIF Viewer` | Application display name |
+| `MEDIA_ROOT` | `/media` (Docker) or `./media` (local) | Root folder for media files |
+| `DATA_ROOT` | `/data` (Docker) or `./data` (local) | Root folder for data (DB, thumbnails) |
+| `DB_PATH` | `{DATA_ROOT}/gifviewer.db` | Path to SQLite database |
+| `THUMB_ROOT` | `{DATA_ROOT}/thumbnails` | Path to thumbnail cache |
+
+## Local Development
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Place media files in the project-local `media/` folder. Data (database, thumbnails) is stored in `data/`.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Docker / Unraid
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+docker compose up -d
+```
 
-## Learn More
+### Volumes
 
-To learn more about Next.js, take a look at the following resources:
+- `/media` — Your media files (read-write). Map to your media library folder.
+- `gifviewer-data` — Named volume for database and thumbnails. Persists across restarts.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+### Example Unraid Mount
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```yaml
+volumes:
+  - /mnt/user/media:/media:rw
+  - gifviewer-data:/data
+```
 
-## Deploy on Vercel
+### Health Check
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+The container health check uses a Node.js-based probe (no curl required).

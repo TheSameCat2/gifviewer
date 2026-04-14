@@ -1,0 +1,31 @@
+# Dependencies
+node_modules
+
+# Next.js build output
+.next
+out
+build
+
+# Environment files (keep .env.example though)
+.env
+.env.local
+.env.*.local
+
+# Debug logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# OS
+.DS_Store
+*.pem
+
+# Types
+*.tsbuildinfo
+next-env.d.ts
+
+# Local data folders (bind mount sources should not be in image)
+# These are here as a hint — real media paths are env-driven
+/data
+/media
