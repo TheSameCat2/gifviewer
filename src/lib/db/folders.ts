@@ -53,16 +53,16 @@ export function getFolderChildren(parentId: number | null): FolderRow[] {
     .all(parentId) as FolderRow[];
 }
 
-/** Get all media items in a folder. */
+/** Get all media items in a folder, ordered by manual_order then filename then id. */
 export function getMediaByFolder(folderId: number | null): import("./media").MediaRow[] {
   const db = getDb();
   if (folderId === null) {
     return db
-      .prepare("SELECT * FROM media WHERE folder_id IS NULL ORDER BY filename")
+      .prepare("SELECT * FROM media WHERE folder_id IS NULL ORDER BY manual_order, filename, id")
       .all() as import("./media").MediaRow[];
   }
   return db
-    .prepare("SELECT * FROM media WHERE folder_id = ? ORDER BY filename")
+    .prepare("SELECT * FROM media WHERE folder_id = ? ORDER BY manual_order, filename, id")
     .all(folderId) as import("./media").MediaRow[];
 }
 

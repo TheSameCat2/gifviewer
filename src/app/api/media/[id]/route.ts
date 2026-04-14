@@ -1,7 +1,12 @@
 import { open, stat } from "node:fs/promises";
+import { rename, copyFile, unlink } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import path from "node:path";
 import { NextResponse } from "next/server";
-import { getMediaById, updateMediaRating, getTagsForMedia, addMediaTag, removeMediaTag } from "@/lib/db/media";
+import { getMediaById, updateMediaRating, getTagsForMedia, addMediaTag, removeMediaTag, updateMediaLocation, moveMediaOneStep } from "@/lib/db/media";
+import { getFolderById } from "@/lib/db/folders";
 import { resolveMediaPath } from "@/lib/media/pathing";
+import { getConfig } from "@/lib/config";
 
 export const runtime = "nodejs";
 
@@ -66,7 +71,7 @@ export async function PATCH(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  let body: { action?: string; rating?: number; tag?: string; tagId?: number };
+  let body: { action?: string; rating?: number; tag?: string; tagId?: number; targetFolderId?: number; direction?: string };
   try {
     body = await request.json();
   } catch {
@@ -97,6 +102,83 @@ export async function PATCH(
     }
     const tags = removeMediaTag(parsedId, body.tagId);
     return NextResponse.json({ ok: true, tags });
+  }
+
+  if (action === "moveMedia") {
+    if (typeof body.targetFolderId !== "number" || !Number.isInteger(body.targetFolderId) || body.targetFolderId <= 0) {
+      return NextResponse.json({ error: "targetFolderId must be a positive integer" }, { status: 400 });
+    }
+
+    const targetFolder = getFolderById(body.targetFolderId);
+    if (!targetFolder) {
+      return NextResponse.json({ error: "Target folder not found" }, { status: 404 });
+    }
+
+    // If already in same folder, return moved: false
+    if (row.folder_id === body.targetFolderId) {
+      return NextResponse.json({ ok: true, moved: false, folderId: body.targetFolderId, filename: row.filename, relativePath: row.relative_path });
+    }
+
+    const { mediaRoot } = getConfig();
+    const sourcePath = resolveMediaPath(row.relative_path);
+    if (!sourcePath) {
+      return NextResponse.json({ error: "Invalid source path" }, { status: 400 });
+    }
+
+    // Capture folder path in a local const for use in nested function (TypeScript doesn't narrow through closures)
+    const folderPath = targetFolder.path;
+
+    // Build target relative path: folderPath + "/" + filename (or name (n).ext if collision)
+    function uniqueFilename(dir: string, baseName: string, ext: string): string {
+      let candidate = `${baseName}${ext}`;
+      let counter = 1;
+      while (existsSync(path.join(mediaRoot, dir, candidate))) {
+        candidate = `${baseName} (${counter})${ext}`;
+        counter++;
+      }
+      return candidate;
+    }
+
+    const ext = path.extname(row.filename);
+    const baseName = path.basename(row.filename, ext);
+    const targetFilename = uniqueFilename(folderPath, baseName, ext);
+    const targetRelativePath = folderPath ? `${folderPath}/${targetFilename}` : targetFilename;
+    const targetAbsPath = path.join(mediaRoot, targetRelativePath);
+
+    let moved = false;
+    try {
+      await rename(sourcePath, targetAbsPath);
+      moved = true;
+    } catch (err: unknown) {
+      const code = (err as { code?: string }).code;
+      if (code === "EXDEV") {
+        // Cross-device: copy then unlink
+        await copyFile(sourcePath, targetAbsPath);
+        await unlink(sourcePath);
+        moved = true;
+      } else {
+        return NextResponse.json({ error: "Failed to move file" }, { status: 500 });
+      }
+    }
+
+    // Update DB after successful move
+    updateMediaLocation(parsedId, body.targetFolderId, targetRelativePath, targetFilename);
+
+    return NextResponse.json({
+      ok: true,
+      moved,
+      folderId: body.targetFolderId,
+      filename: targetFilename,
+      relativePath: targetRelativePath,
+    });
+  }
+
+  if (action === "sortMedia") {
+    if (typeof body.direction !== "string" || !["earlier", "later"].includes(body.direction)) {
+      return NextResponse.json({ error: "direction must be 'earlier' or 'later'" }, { status: 400 });
+    }
+    const result = moveMediaOneStep(parsedId, body.direction as "earlier" | "later");
+    return NextResponse.json({ ok: true, changed: result !== null });
   }
 
   return NextResponse.json({ error: "Unknown action" }, { status: 400 });

@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { getConfig } from "@/lib/config";
-import { getRootFolder, getFolderById, getFolderChildren, getMediaByFolder, getFolderBreadcrumbs, hasFolders } from "@/lib/db/folders";
+import { getRootFolder, getFolderById, getFolderChildren, getMediaByFolder, getFolderBreadcrumbs, hasFolders, getAllFolders } from "@/lib/db/folders";
 import { getMediaById, getTagsForMedia } from "@/lib/db/media";
 import { FolderTree } from "@/components/gallery/FolderTree";
 import { MediaGrid } from "@/components/gallery/MediaGrid";
@@ -75,6 +75,13 @@ export default async function GalleryPage({ searchParams }: PageProps) {
 
   const libraryExists = hasFolders();
 
+  // Build folder options for move controls
+  const folderOptions = getAllFolders().map((f) => ({
+    id: f.id,
+    name: f.name || "/",
+    path: f.path,
+  }));
+
   return (
     <div className="min-h-screen flex flex-col bg-zinc-50 dark:bg-zinc-950">
       {/* Header */}
@@ -99,6 +106,7 @@ export default async function GalleryPage({ searchParams }: PageProps) {
           previousId={previousId}
           nextId={nextId}
           initialTags={selectedMediaTags}
+          folderOptions={folderOptions}
         />
       )}
 

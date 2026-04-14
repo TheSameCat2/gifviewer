@@ -2,7 +2,14 @@
 
 import { useState, useCallback } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { MediaRow, TagRow } from "@/lib/db/media";
+
+interface FolderOption {
+  id: number;
+  name: string;
+  path: string;
+}
 
 interface FullscreenViewerProps {
   item: MediaRow;
@@ -10,6 +17,7 @@ interface FullscreenViewerProps {
   previousId: number | null;
   nextId: number | null;
   initialTags: TagRow[];
+  folderOptions: FolderOption[];
 }
 
 function isVideoMime(mimeType: string | null): boolean {
@@ -43,7 +51,9 @@ export function FullscreenViewer({
   previousId,
   nextId,
   initialTags,
+  folderOptions,
 }: FullscreenViewerProps) {
+  const router = useRouter();
   const isVideo = isVideoMime(item.mime_type);
   const backHref = folderId ? `/?folder=${folderId}` : "/";
   const mediaSrc = `/api/media/${item.id}`;
@@ -53,6 +63,9 @@ export function FullscreenViewer({
   const [tagInput, setTagInput] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [selectedFolderId, setSelectedFolderId] = useState<number | "">(folderId ?? "");
+
+  const currentFolderName = folderOptions.find((f) => f.id === item.folder_id)?.name ?? "/";
 
   const handleRating = useCallback(
     async (r: number) => {
@@ -102,6 +115,41 @@ export function FullscreenViewer({
     },
     [item.id]
   );
+
+  const handleSort = useCallback(
+    async (direction: "earlier" | "later") => {
+      setPending(true);
+      setError(null);
+      try {
+        await patchMedia(item.id, { action: "sortMedia", direction });
+        router.refresh();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Failed to sort");
+      } finally {
+        setPending(false);
+      }
+    },
+    [item.id, router]
+  );
+
+  const handleMove = useCallback(async () => {
+    const target = selectedFolderId === "" ? null : Number(selectedFolderId);
+    if (target === null) return;
+    if (target === item.folder_id) return;
+    setPending(true);
+    setError(null);
+    try {
+      const res = await patchMedia(item.id, { action: "moveMedia", targetFolderId: target });
+      if (res.moved) {
+        router.push(`/?folder=${target}&media=${item.id}`);
+        router.refresh();
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to move");
+    } finally {
+      setPending(false);
+    }
+  }, [item.id, item.folder_id, selectedFolderId, router]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90">
@@ -229,6 +277,51 @@ export function FullscreenViewer({
               +
             </button>
           </div>
+        </div>
+
+        {/* Move / Sort controls */}
+        <div className="mt-2 flex items-center justify-center gap-2">
+          <span className="text-xs text-zinc-400">Move:</span>
+          <button
+            onClick={() => handleSort("earlier")}
+            disabled={pending}
+            className="rounded bg-white/20 px-2 py-0.5 text-xs text-white hover:bg-white/30 disabled:opacity-50"
+            aria-label="Move earlier"
+          >
+            ← Earlier
+          </button>
+          <button
+            onClick={() => handleSort("later")}
+            disabled={pending}
+            className="rounded bg-white/20 px-2 py-0.5 text-xs text-white hover:bg-white/30 disabled:opacity-50"
+            aria-label="Move later"
+          >
+            Later →
+          </button>
+          <span className="mx-1 text-zinc-500">|</span>
+          <span className="text-xs text-zinc-400">
+            Folder: <span className="text-zinc-300">{currentFolderName}</span>
+          </span>
+          <select
+            value={selectedFolderId}
+            onChange={(e) => setSelectedFolderId(e.target.value === "" ? "" : Number(e.target.value))}
+            disabled={pending}
+            className="rounded bg-white/10 px-2 py-0.5 text-xs text-white disabled:opacity-50"
+          >
+            <option value="">-- Select --</option>
+            {folderOptions.map((opt) => (
+              <option key={opt.id} value={opt.id}>
+                {opt.name || "/"}
+              </option>
+            ))}
+          </select>
+          <button
+            onClick={handleMove}
+            disabled={pending || selectedFolderId === "" || selectedFolderId === item.folder_id}
+            className="rounded bg-white/20 px-2 py-0.5 text-xs text-white hover:bg-white/30 disabled:opacity-50"
+          >
+            Move
+          </button>
         </div>
 
         {error && <p className="mt-1 text-center text-xs text-red-400">{error}</p>}
