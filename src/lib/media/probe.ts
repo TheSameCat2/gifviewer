@@ -24,14 +24,25 @@ export interface MediaMetadata {
 async function probeImage(filePath: string): Promise<MediaMetadata> {
   const ext = getExtension(filePath);
   const mediaType = classifyMediaType(ext)!;
-  const metadata = await sharp(filePath).metadata();
-  return {
-    width: metadata.width ?? null,
-    height: metadata.height ?? null,
-    duration_secs: null,
-    mimeType: getMimeType(ext),
-    mediaType,
-  };
+  try {
+    const metadata = await sharp(filePath).metadata();
+    return {
+      width: metadata.width ?? null,
+      height: metadata.height ?? null,
+      duration_secs: null,
+      mimeType: getMimeType(ext),
+      mediaType,
+    };
+  } catch (err) {
+    console.warn(`[probe] sharp metadata failed for: ${filePath}`, err);
+    return {
+      width: null,
+      height: null,
+      duration_secs: null,
+      mimeType: getMimeType(ext),
+      mediaType,
+    };
+  }
 }
 
 /**
