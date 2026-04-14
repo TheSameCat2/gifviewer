@@ -148,6 +148,7 @@ export default async function GalleryPage({ searchParams }: PageProps) {
       {/* Fullscreen viewer overlay */}
       {selectedMedia && (
         <FullscreenViewer
+          key={`${selectedMedia.id}:${selectedMedia.folder_id ?? ""}`}
           item={selectedMedia}
           backHref={backHref}
           previousHref={previousHref}

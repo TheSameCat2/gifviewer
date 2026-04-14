@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
@@ -65,6 +65,28 @@ export function FullscreenViewer({
   const [error, setError] = useState<string | null>(null);
   const [selectedFolderId, setSelectedFolderId] = useState<number | "">(item.folder_id ?? "");
 
+  const tagInputRef = useRef<HTMLInputElement>(null);
+  const tagInputShouldFocusRef = useRef(false);
+
+  // Resync local state when the viewed media changes (e.g., Previous/Next navigation)
+  useEffect(() => {
+    setRating(item.rating);
+    setTags(initialTags);
+    setSelectedFolderId(item.folder_id ?? "");
+    setTagInput("");
+    setError(null);
+    setPending(false);
+    tagInputShouldFocusRef.current = false;
+  }, [item.id, item.folder_id]);
+
+  // Restore tag input focus after a successful tag add
+  useEffect(() => {
+    if (!pending && tagInputShouldFocusRef.current) {
+      tagInputShouldFocusRef.current = false;
+      tagInputRef.current?.focus();
+    }
+  }, [pending]);
+
   // Keyboard navigation: left/right arrows to navigate between media items
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -111,6 +133,7 @@ export function FullscreenViewer({
       const res = await patchMedia(item.id, { action: "addTag", tag: trimmed });
       setTags(res.tags);
       setTagInput("");
+      tagInputShouldFocusRef.current = true;
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to add tag");
     } finally {
@@ -283,6 +306,7 @@ export function FullscreenViewer({
           ))}
           <div className="flex items-center gap-1">
             <input
+              ref={tagInputRef}
               type="text"
               value={tagInput}
               onChange={(e) => setTagInput(e.target.value)}
