@@ -1,6 +1,6 @@
 import { open, stat } from "node:fs/promises";
 import { NextResponse } from "next/server";
-import { getMediaById } from "@/lib/db/media";
+import { getMediaById, updateMediaRating, getTagsForMedia, addMediaTag, removeMediaTag } from "@/lib/db/media";
 import { resolveMediaPath } from "@/lib/media/pathing";
 
 export const runtime = "nodejs";
@@ -48,4 +48,56 @@ export async function GET(
       "Content-Disposition": `inline; filename="${row.filename.replace(/"/g, "_")}"`,
     },
   });
+}
+
+export async function PATCH(
+  request: Request,
+  context: { params: Promise<{ id: string }> }
+) {
+  const { id } = await context.params;
+
+  const parsedId = Number(id);
+  if (!Number.isInteger(parsedId) || parsedId <= 0) {
+    return NextResponse.json({ error: "Invalid id" }, { status: 400 });
+  }
+
+  const row = getMediaById(parsedId);
+  if (!row) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
+  let body: { action?: string; rating?: number; tag?: string; tagId?: number };
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
+
+  const { action } = body;
+
+  if (action === "setRating") {
+    const rating = typeof body.rating === "number" ? body.rating : -1;
+    const clamped = Math.max(0, Math.min(5, rating));
+    updateMediaRating(parsedId, clamped);
+    const tags = getTagsForMedia(parsedId);
+    return NextResponse.json({ ok: true, rating: clamped, tags });
+  }
+
+  if (action === "addTag") {
+    if (typeof body.tag !== "string" || !body.tag.trim()) {
+      return NextResponse.json({ error: "tag must be a non-empty string" }, { status: 400 });
+    }
+    const tags = addMediaTag(parsedId, body.tag);
+    return NextResponse.json({ ok: true, tags });
+  }
+
+  if (action === "removeTag") {
+    if (typeof body.tagId !== "number" || !Number.isInteger(body.tagId) || body.tagId <= 0) {
+      return NextResponse.json({ error: "tagId must be a positive integer" }, { status: 400 });
+    }
+    const tags = removeMediaTag(parsedId, body.tagId);
+    return NextResponse.json({ ok: true, tags });
+  }
+
+  return NextResponse.json({ error: "Unknown action" }, { status: 400 });
 }

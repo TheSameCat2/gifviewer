@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { getConfig } from "@/lib/config";
 import { getRootFolder, getFolderById, getFolderChildren, getMediaByFolder, getFolderBreadcrumbs, hasFolders } from "@/lib/db/folders";
-import { getMediaById } from "@/lib/db/media";
+import { getMediaById, getTagsForMedia } from "@/lib/db/media";
 import { FolderTree } from "@/components/gallery/FolderTree";
 import { MediaGrid } from "@/components/gallery/MediaGrid";
 import { FullscreenViewer } from "@/components/gallery/FullscreenViewer";
@@ -58,6 +58,7 @@ export default async function GalleryPage({ searchParams }: PageProps) {
 
   // Load selected media
   const selectedMedia = selectedMediaId ? getMediaById(selectedMediaId) : null;
+  const selectedMediaTags = selectedMedia ? getTagsForMedia(selectedMedia.id) : [];
 
   // Compute previous/next IDs for viewer navigation if media is in current folder
   let previousId: number | null = null;
@@ -97,6 +98,7 @@ export default async function GalleryPage({ searchParams }: PageProps) {
           folderId={selectedFolderId ?? undefined}
           previousId={previousId}
           nextId={nextId}
+          initialTags={selectedMediaTags}
         />
       )}
 
