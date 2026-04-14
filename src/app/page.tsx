@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { getConfig } from "@/lib/config";
-import { getRootFolder, getFolderById, getFolderChildren, getMediaByFolder, getFolderBreadcrumbs, hasFolders, getAllFolders } from "@/lib/db/folders";
+import { getRootFolder, getFolderById, getFolderChildren, getMediaByFolderPaginated, getMediaCountByFolder, getAdjacentMediaIds, getMediaPageForFolderItem, getFolderBreadcrumbs, hasFolders, getAllFolders } from "@/lib/db/folders";
 import { getMediaById, getTagsForMedia } from "@/lib/db/media";
 import { FolderTree } from "@/components/gallery/FolderTree";
 import { MediaGrid } from "@/components/gallery/MediaGrid";
@@ -10,12 +10,14 @@ import { ScanLibraryButton } from "@/components/gallery/ScanLibraryButton";
 // Force dynamic rendering to prevent build-time DB access and allow env vars
 export const dynamic = "force-dynamic";
 
+const PAGE_SIZE = 120;
+
 interface PageProps {
-  searchParams: Promise<{ folder?: string; media?: string }>;
+  searchParams: Promise<{ folder?: string; media?: string; page?: string }>;
 }
 
 export default async function GalleryPage({ searchParams }: PageProps) {
-  const { folder: folderParam, media: mediaParam } = await searchParams;
+  const { folder: folderParam, media: mediaParam, page: pageParam } = await searchParams;
   const config = getConfig();
 
   // Parse folder ID safely
@@ -42,11 +44,6 @@ export default async function GalleryPage({ searchParams }: PageProps) {
     selectedFolderId = rootFolder.id;
   }
 
-  // Load content for selected folder
-  const childFolders = selectedFolder ? getFolderChildren(selectedFolder.id) : [];
-  const mediaItems = selectedFolder ? getMediaByFolder(selectedFolder.id) : [];
-  const breadcrumbs = selectedFolderId ? getFolderBreadcrumbs(selectedFolderId) : [];
-
   // Parse media ID safely
   let selectedMediaId: number | null = null;
   if (mediaParam !== undefined) {
@@ -56,22 +53,71 @@ export default async function GalleryPage({ searchParams }: PageProps) {
     }
   }
 
-  // Load selected media
+  // Load selected media first (needed for page derivation)
   const selectedMedia = selectedMediaId ? getMediaById(selectedMediaId) : null;
   const selectedMediaTags = selectedMedia ? getTagsForMedia(selectedMedia.id) : [];
 
-  // Compute previous/next IDs for viewer navigation if media is in current folder
-  let previousId: number | null = null;
-  let nextId: number | null = null;
-  if (selectedMedia && mediaItems.length > 0) {
-    const currentIndex = mediaItems.findIndex((m) => m.id === selectedMediaId);
-    if (currentIndex > 0) {
-      previousId = mediaItems[currentIndex - 1].id;
-    }
-    if (currentIndex >= 0 && currentIndex < mediaItems.length - 1) {
-      nextId = mediaItems[currentIndex + 1].id;
+  // Parse page safely (1-based)
+  let pageFromParams = 1;
+  if (pageParam !== undefined) {
+    const parsed = parseInt(pageParam, 10);
+    if (!isNaN(parsed) && parsed >= 1) {
+      pageFromParams = parsed;
     }
   }
+
+  // Load content for selected folder
+  const childFolders = selectedFolder ? getFolderChildren(selectedFolder.id) : [];
+  const totalMediaCount = selectedFolder ? getMediaCountByFolder(selectedFolder.id) : 0;
+  const totalPages = Math.max(1, Math.ceil(totalMediaCount / PAGE_SIZE));
+
+  // Clamp requested page to valid range once total is known
+  const clampedPage = Math.min(pageFromParams, totalPages);
+
+  // If a selected media item belongs to the selected folder, derive its correct page
+  const effectivePage =
+    selectedMedia && selectedFolderId !== null && selectedMedia.folder_id === selectedFolderId
+      ? getMediaPageForFolderItem(selectedFolderId, selectedMediaId!, PAGE_SIZE) ?? clampedPage
+      : clampedPage;
+
+  const currentPage = Math.min(effectivePage, totalPages);
+  const offset = (currentPage - 1) * PAGE_SIZE;
+
+  // Reload media items with the clamped offset
+  const mediaItems = selectedFolder
+    ? getMediaByFolderPaginated(selectedFolder.id, PAGE_SIZE, offset)
+    : [];
+  const breadcrumbs = selectedFolderId ? getFolderBreadcrumbs(selectedFolderId) : [];
+
+  // Compute previousHref/nextHref for fullscreen navigation across page boundaries
+  let previousHref: string | null = null;
+  let nextHref: string | null = null;
+  if (selectedMedia && selectedFolderId !== null) {
+    const { previousId, nextId } = getAdjacentMediaIds(selectedFolderId, selectedMediaId!);
+    const folderPart = `?folder=${selectedFolderId}`;
+
+    if (previousId !== null) {
+      // Determine if we cross a page boundary
+      const prevPage =
+        getMediaPageForFolderItem(selectedFolderId, previousId, PAGE_SIZE) ?? currentPage;
+      previousHref = prevPage === currentPage
+        ? `${folderPart}&media=${previousId}`
+        : `${folderPart}&page=${prevPage}&media=${previousId}`;
+    }
+
+    if (nextId !== null) {
+      const nextPage =
+        getMediaPageForFolderItem(selectedFolderId, nextId, PAGE_SIZE) ?? currentPage;
+      nextHref = nextPage === currentPage
+        ? `${folderPart}&media=${nextId}`
+        : `${folderPart}&page=${nextPage}&media=${nextId}`;
+    }
+  }
+
+  // backHref preserves the current page when closing fullscreen
+  const backHref = selectedFolderId !== null
+    ? `/?folder=${selectedFolderId}&page=${currentPage}`
+    : "/";
 
   const libraryExists = hasFolders();
 
@@ -100,9 +146,9 @@ export default async function GalleryPage({ searchParams }: PageProps) {
       {selectedMedia && (
         <FullscreenViewer
           item={selectedMedia}
-          folderId={selectedFolderId ?? undefined}
-          previousId={previousId}
-          nextId={nextId}
+          backHref={backHref}
+          previousHref={previousHref}
+          nextHref={nextHref}
           initialTags={selectedMediaTags}
           folderOptions={folderOptions}
         />
@@ -200,10 +246,39 @@ export default async function GalleryPage({ searchParams }: PageProps) {
               {/* Media grid */}
               {mediaItems.length > 0 && (
                 <section>
-                  <h2 className="mb-4 text-sm font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
-                    Media ({mediaItems.length})
-                  </h2>
-                  <MediaGrid items={mediaItems} folderId={selectedFolderId ?? undefined} />
+                  <div className="mb-4 flex items-center justify-between">
+                    <h2 className="text-sm font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                      Media ({totalMediaCount})
+                    </h2>
+                    {totalPages > 1 && (
+                      <div className="flex items-center gap-2 text-sm text-zinc-500 dark:text-zinc-400">
+                        <span>Page {currentPage} of {totalPages}</span>
+                        <div className="flex gap-1">
+                          {currentPage > 1 ? (
+                            <Link
+                              href={`/?folder=${selectedFolderId}&page=${currentPage - 1}`}
+                              className="rounded border border-zinc-300 px-2 py-0.5 text-xs hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
+                            >
+                              ← Prev
+                            </Link>
+                          ) : (
+                            <span className="rounded border border-zinc-200 px-2 py-0.5 text-xs text-zinc-300 dark:border-zinc-800 dark:text-zinc-600">← Prev</span>
+                          )}
+                          {currentPage < totalPages ? (
+                            <Link
+                              href={`/?folder=${selectedFolderId}&page=${currentPage + 1}`}
+                              className="rounded border border-zinc-300 px-2 py-0.5 text-xs hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
+                            >
+                              Next →
+                            </Link>
+                          ) : (
+                            <span className="rounded border border-zinc-200 px-2 py-0.5 text-xs text-zinc-300 dark:border-zinc-800 dark:text-zinc-600">Next →</span>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                  <MediaGrid items={mediaItems} folderId={selectedFolderId ?? undefined} page={currentPage} />
                 </section>
               )}
             </>

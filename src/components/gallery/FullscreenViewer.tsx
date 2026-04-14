@@ -14,9 +14,9 @@ interface FolderOption {
 
 interface FullscreenViewerProps {
   item: MediaRow;
-  folderId?: number;
-  previousId: number | null;
-  nextId: number | null;
+  backHref: string;
+  previousHref: string | null;
+  nextHref: string | null;
   initialTags: TagRow[];
   folderOptions: FolderOption[];
 }
@@ -48,15 +48,14 @@ async function patchMedia(id: number, body: Record<string, unknown>) {
 
 export function FullscreenViewer({
   item,
-  folderId,
-  previousId,
-  nextId,
+  backHref,
+  previousHref,
+  nextHref,
   initialTags,
   folderOptions,
 }: FullscreenViewerProps) {
   const router = useRouter();
   const isVideo = isVideoMime(item.mime_type);
-  const backHref = folderId ? `/?folder=${folderId}` : "/";
   const mediaSrc = `/api/media/${item.id}`;
 
   const [rating, setRating] = useState(item.rating);
@@ -64,7 +63,7 @@ export function FullscreenViewer({
   const [tagInput, setTagInput] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [selectedFolderId, setSelectedFolderId] = useState<number | "">(folderId ?? "");
+  const [selectedFolderId, setSelectedFolderId] = useState<number | "">(item.folder_id ?? "");
 
   // Keyboard navigation: left/right arrows to navigate between media items
   useEffect(() => {
@@ -74,15 +73,15 @@ export function FullscreenViewer({
       const target = e.target as HTMLElement;
       const tagName = target.tagName.toLowerCase();
       if (["input", "textarea", "select", "button", "a", "video"].includes(tagName) || target.isContentEditable) return;
-      if (e.key === "ArrowLeft" && previousId !== null) {
-        router.push(`/?folder=${folderId ?? ""}&media=${previousId}`);
-      } else if (e.key === "ArrowRight" && nextId !== null) {
-        router.push(`/?folder=${folderId ?? ""}&media=${nextId}`);
+      if (e.key === "ArrowLeft" && previousHref !== null) {
+        router.push(previousHref);
+      } else if (e.key === "ArrowRight" && nextHref !== null) {
+        router.push(nextHref);
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [folderId, previousId, nextId, router]);
+  }, [previousHref, nextHref, router]);
 
   const currentFolderName = folderOptions.find((f) => f.id === item.folder_id)?.name ?? "/";
 
@@ -182,17 +181,17 @@ export function FullscreenViewer({
 
       {/* Navigation */}
       <div className="absolute inset-x-0 top-4 flex justify-center gap-4">
-        {previousId !== undefined && previousId !== null && (
+        {previousHref !== null && (
           <Link
-            href={`/?folder=${folderId ?? ""}&media=${previousId}`}
+            href={previousHref}
             className="rounded bg-black/50 px-3 py-2 text-sm text-white hover:bg-black/70"
           >
             ← Previous
           </Link>
         )}
-        {nextId !== undefined && nextId !== null && (
+        {nextHref !== null && (
           <Link
-            href={`/?folder=${folderId ?? ""}&media=${nextId}`}
+            href={nextHref}
             className="rounded bg-black/50 px-3 py-2 text-sm text-white hover:bg-black/70"
           >
             Next →

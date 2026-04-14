@@ -5,16 +5,20 @@ import { MediaRow } from "@/lib/db/media";
 interface MediaGridProps {
   items: MediaRow[];
   folderId?: number;
+  page?: number;
 }
 
 function isVideoMime(mimeType: string | null): boolean {
   return mimeType === "video/webm";
 }
 
-export function MediaGrid({ items, folderId }: MediaGridProps) {
+export function MediaGrid({ items, folderId, page }: MediaGridProps) {
   if (items.length === 0) return null;
 
-  const base = `?folder=${folderId ?? ""}`;
+  const params = new URLSearchParams();
+  if (folderId !== undefined) params.set("folder", String(folderId));
+  if (page !== undefined) params.set("page", String(page));
+  const base = `?${params.toString()}`;
 
   return (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">

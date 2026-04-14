@@ -66,6 +66,105 @@ export function getMediaByFolder(folderId: number | null): import("./media").Med
     .all(folderId) as import("./media").MediaRow[];
 }
 
+// Helper: build the WHERE clause and params for folder-scoped media queries
+function folderMediaWhere(folderId: number | null): { where: string; params: (number | null)[] } {
+  if (folderId === null) {
+    return { where: "folder_id IS NULL", params: [] };
+  }
+  return { where: "folder_id = ?", params: [folderId] };
+}
+
+/** Get the count of media items in a folder. */
+export function getMediaCountByFolder(folderId: number | null): number {
+  const db = getDb();
+  const { where, params } = folderMediaWhere(folderId);
+  const row = db
+    .prepare(`SELECT COUNT(*) as count FROM media WHERE ${where}`)
+    .get(...params) as { count: number };
+  return row.count;
+}
+
+/** Get a paginated slice of media items in a folder, ordered by manual_order then filename then id. */
+export function getMediaByFolderPaginated(
+  folderId: number | null,
+  limit: number,
+  offset: number
+): import("./media").MediaRow[] {
+  const db = getDb();
+  const { where, params } = folderMediaWhere(folderId);
+  return db
+    .prepare(`SELECT * FROM media WHERE ${where} ORDER BY manual_order, filename, id LIMIT ? OFFSET ?`)
+    .all(...params, limit, offset) as import("./media").MediaRow[];
+}
+
+/** Get the previous and next media IDs adjacent to the given mediaId within a folder.
+ *  Uses direct SQL tuple comparison so it never loads all IDs into memory. */
+export function getAdjacentMediaIds(
+  folderId: number | null,
+  mediaId: number
+): { previousId: number | null; nextId: number | null } {
+  const db = getDb();
+  const { where, params } = folderMediaWhere(folderId);
+
+  // Fetch the current row's ordering values (scoped to folder to ensure it belongs)
+  const current = db
+    .prepare(`SELECT manual_order, filename, id FROM media WHERE ${where} AND id = ?`)
+    .get(...params, mediaId) as { manual_order: number; filename: string; id: number } | undefined;
+  if (!current) return { previousId: null, nextId: null };
+
+  // Previous: the row with the greatest (manual_order, filename, id) that is strictly less than the current tuple
+  const prev = db
+    .prepare(
+      `SELECT id FROM media WHERE ${where} AND (manual_order < ? OR (manual_order = ? AND filename < ?) OR (manual_order = ? AND filename = ? AND id < ?))
+       ORDER BY manual_order DESC, filename DESC, id DESC LIMIT 1`
+    )
+    .get(...params, current.manual_order, current.manual_order, current.filename, current.manual_order, current.filename, current.id) as
+      | { id: number }
+      | undefined;
+
+  // Next: the row with the smallest (manual_order, filename, id) that is strictly greater than the current tuple
+  const next = db
+    .prepare(
+      `SELECT id FROM media WHERE ${where} AND (manual_order > ? OR (manual_order = ? AND filename > ?) OR (manual_order = ? AND filename = ? AND id > ?))
+       ORDER BY manual_order ASC, filename ASC, id ASC LIMIT 1`
+    )
+    .get(...params, current.manual_order, current.manual_order, current.filename, current.manual_order, current.filename, current.id) as
+      | { id: number }
+      | undefined;
+
+  return { previousId: prev?.id ?? null, nextId: next?.id ?? null };
+}
+
+/** Compute which page (1-based) the given mediaId belongs to within a folder, or null if not found.
+ *  Uses a COUNT(*) subquery so it never loads all IDs into memory. */
+export function getMediaPageForFolderItem(
+  folderId: number | null,
+  mediaId: number,
+  pageSize: number
+): number | null {
+  const db = getDb();
+  const { where, params } = folderMediaWhere(folderId);
+
+  // Fetch the current row's ordering values (scoped to folder to ensure it belongs)
+  const current = db
+    .prepare(`SELECT manual_order, filename, id FROM media WHERE ${where} AND id = ?`)
+    .get(...params, mediaId) as { manual_order: number; filename: string; id: number } | undefined;
+  if (!current) return null;
+
+  // Count items that sort strictly before this one
+  const row = db
+    .prepare(
+      `SELECT COUNT(*) as cnt FROM media WHERE ${where} AND
+       (manual_order < ? OR (manual_order = ? AND filename < ?) OR (manual_order = ? AND filename = ? AND id < ?))`
+    )
+    .get(...params, current.manual_order, current.manual_order, current.filename, current.manual_order, current.filename, current.id) as
+      | { cnt: number }
+      | undefined;
+
+  if (!row) return null;
+  return Math.floor(row.cnt / pageSize) + 1;
+}
+
 /** Build breadcrumb trail from root to a given folder ID. */
 export function getFolderBreadcrumbs(folderId: number): FolderRow[] {
   const db = getDb();
