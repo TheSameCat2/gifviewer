@@ -1,8 +1,8 @@
-version: "3.8"
-
 services:
   gifviewer:
-    build: .
+    # Default to the published GHCR image. Override with GIFVIEWER_IMAGE env var.
+    image: ${GIFVIEWER_IMAGE:-ghcr.io/thesamecat2/gifviewer:latest}
+    pull_policy: always
     container_name: gifviewer
     restart: unless-stopped
     ports:
@@ -23,6 +23,10 @@ services:
       timeout: 10s
       retries: 3
 
+# To build locally instead of pulling, first build the image:
+#   docker build -t localhost/gifviewer:latest .
+# Then override the image via env var:
+#   GIFVIEWER_IMAGE=localhost/gifviewer:latest docker compose up
 volumes:
   gifviewer-data:
     driver: local

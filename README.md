@@ -33,9 +33,28 @@ Place media in `media/` (or point `MEDIA_ROOT` elsewhere). Database and thumbnai
 
 ## Docker / Unraid
 
+The image is automatically published to GHCR on pushes to `master` and version tags (`v*`). Default image:
+
+```
+ghcr.io/thesamecat2/gifviewer:latest
+```
+
+Because this repo is private, hosts pulling the image must authenticate to GHCR first:
+
 ```bash
+# Create a token with read:packages scope at https://github.com/settings/tokens
+docker login ghcr.io -u <your-github-username> --password-stdin <<< "${GHCR_TOKEN}"
 docker compose up -d
 ```
+
+To use a local build instead, first build the image, then override the image via `GIFVIEWER_IMAGE`:
+
+```bash
+docker build -t localhost/gifviewer:latest .
+GIFVIEWER_IMAGE=localhost/gifviewer:latest docker compose up
+```
+
+CI publishes a multi-arch image (`linux/amd64` + `linux/arm64`) suitable for most hosts.
 
 ### Volumes
 
