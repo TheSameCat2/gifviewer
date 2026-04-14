@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
@@ -65,6 +65,24 @@ export function FullscreenViewer({
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedFolderId, setSelectedFolderId] = useState<number | "">(folderId ?? "");
+
+  // Keyboard navigation: left/right arrows to navigate between media items
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const target = e.target as HTMLElement;
+      const tagName = target.tagName.toLowerCase();
+      if (["input", "textarea", "select", "button", "a", "video"].includes(tagName) || target.isContentEditable) return;
+      if (e.key === "ArrowLeft" && previousId !== null) {
+        router.push(`/?folder=${folderId ?? ""}&media=${previousId}`);
+      } else if (e.key === "ArrowRight" && nextId !== null) {
+        router.push(`/?folder=${folderId ?? ""}&media=${nextId}`);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [folderId, previousId, nextId, router]);
 
   const currentFolderName = folderOptions.find((f) => f.id === item.folder_id)?.name ?? "/";
 
