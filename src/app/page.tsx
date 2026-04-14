@@ -6,11 +6,10 @@ import { FolderTree } from "@/components/gallery/FolderTree";
 import { MediaGrid } from "@/components/gallery/MediaGrid";
 import { FullscreenViewer } from "@/components/gallery/FullscreenViewer";
 import { ScanLibraryButton } from "@/components/gallery/ScanLibraryButton";
+import { PAGE_SIZE } from "@/lib/gallery";
 
 // Force dynamic rendering to prevent build-time DB access and allow env vars
 export const dynamic = "force-dynamic";
-
-const PAGE_SIZE = 120;
 
 interface PageProps {
   searchParams: Promise<{ folder?: string; media?: string; page?: string }>;
@@ -57,12 +56,12 @@ export default async function GalleryPage({ searchParams }: PageProps) {
   const selectedMedia = selectedMediaId ? getMediaById(selectedMediaId) : null;
   const selectedMediaTags = selectedMedia ? getTagsForMedia(selectedMedia.id) : [];
 
-  // Parse page safely (1-based)
-  let pageFromParams = 1;
+  // Parse page param as "loaded page count" (1-based)
+  let requestedLoadedPages = 1;
   if (pageParam !== undefined) {
     const parsed = parseInt(pageParam, 10);
     if (!isNaN(parsed) && parsed >= 1) {
-      pageFromParams = parsed;
+      requestedLoadedPages = parsed;
     }
   }
 
@@ -71,25 +70,32 @@ export default async function GalleryPage({ searchParams }: PageProps) {
   const totalMediaCount = selectedFolder ? getMediaCountByFolder(selectedFolder.id) : 0;
   const totalPages = Math.max(1, Math.ceil(totalMediaCount / PAGE_SIZE));
 
-  // Clamp requested page to valid range once total is known
-  const clampedPage = Math.min(pageFromParams, totalPages);
+  // Clamp requested loaded pages to valid range
+  const clampedRequestedPages = Math.min(requestedLoadedPages, totalPages);
 
-  // If a selected media item belongs to the selected folder, derive its correct page
-  const effectivePage =
+  // If a selected media item belongs to the selected folder, derive its page
+  const selectedMediaPage =
     selectedMedia && selectedFolderId !== null && selectedMedia.folder_id === selectedFolderId
-      ? getMediaPageForFolderItem(selectedFolderId, selectedMediaId!, PAGE_SIZE) ?? clampedPage
-      : clampedPage;
+      ? getMediaPageForFolderItem(selectedFolderId, selectedMediaId!, PAGE_SIZE) ?? clampedRequestedPages
+      : null;
 
-  const currentPage = Math.min(effectivePage, totalPages);
-  const offset = (currentPage - 1) * PAGE_SIZE;
+  // Effective loaded-page count: max of requested or selected media's page
+  const effectiveLoadedPages = selectedMediaPage !== null
+    ? Math.max(clampedRequestedPages, selectedMediaPage)
+    : clampedRequestedPages;
 
-  // Reload media items with the clamped offset
-  const mediaItems = selectedFolder
-    ? getMediaByFolderPaginated(selectedFolder.id, PAGE_SIZE, offset)
+  // Clamp to total pages
+  const finalLoadedPages = Math.min(effectiveLoadedPages, totalPages);
+
+  // Fetch initial media list: first `finalLoadedPages * PAGE_SIZE` items
+  const initialMediaItems = selectedFolder
+    ? getMediaByFolderPaginated(selectedFolder.id, finalLoadedPages * PAGE_SIZE, 0)
     : [];
+
   const breadcrumbs = selectedFolderId ? getFolderBreadcrumbs(selectedFolderId) : [];
 
-  // Compute previousHref/nextHref for fullscreen navigation across page boundaries
+  // Compute previousHref/nextHref for fullscreen navigation
+  // Use max(effectiveLoadedPages, pageForAdjacentItem) to ensure loaded page count is preserved
   let previousHref: string | null = null;
   let nextHref: string | null = null;
   if (selectedMedia && selectedFolderId !== null) {
@@ -97,26 +103,23 @@ export default async function GalleryPage({ searchParams }: PageProps) {
     const folderPart = `?folder=${selectedFolderId}`;
 
     if (previousId !== null) {
-      // Determine if we cross a page boundary
       const prevPage =
-        getMediaPageForFolderItem(selectedFolderId, previousId, PAGE_SIZE) ?? currentPage;
-      previousHref = prevPage === currentPage
-        ? `${folderPart}&media=${previousId}`
-        : `${folderPart}&page=${prevPage}&media=${previousId}`;
+        getMediaPageForFolderItem(selectedFolderId, previousId, PAGE_SIZE) ?? finalLoadedPages;
+      const hrefPage = Math.max(finalLoadedPages, prevPage);
+      previousHref = `${folderPart}&page=${hrefPage}&media=${previousId}`;
     }
 
     if (nextId !== null) {
       const nextPage =
-        getMediaPageForFolderItem(selectedFolderId, nextId, PAGE_SIZE) ?? currentPage;
-      nextHref = nextPage === currentPage
-        ? `${folderPart}&media=${nextId}`
-        : `${folderPart}&page=${nextPage}&media=${nextId}`;
+        getMediaPageForFolderItem(selectedFolderId, nextId, PAGE_SIZE) ?? finalLoadedPages;
+      const hrefPage = Math.max(finalLoadedPages, nextPage);
+      nextHref = `${folderPart}&page=${hrefPage}&media=${nextId}`;
     }
   }
 
-  // backHref preserves the current page when closing fullscreen
+  // backHref preserves the current loaded-page count when closing fullscreen
   const backHref = selectedFolderId !== null
-    ? `/?folder=${selectedFolderId}&page=${currentPage}`
+    ? `/?folder=${selectedFolderId}&page=${finalLoadedPages}`
     : "/";
 
   const libraryExists = hasFolders();
@@ -207,14 +210,14 @@ export default async function GalleryPage({ searchParams }: PageProps) {
             <div className="flex flex-col items-center justify-center py-24 text-center">
               <p className="text-zinc-500 dark:text-zinc-400">Select a folder to view media.</p>
             </div>
-          ) : childFolders.length === 0 && mediaItems.length === 0 ? (
+          ) : childFolders.length === 0 && initialMediaItems.length === 0 ? (
             /* Empty state: folder is empty */
             <div className="flex flex-col items-center justify-center py-24 text-center">
               <div className="mb-6 text-6xl">🗂️</div>
               <h2 className="mb-2 text-xl font-semibold text-zinc-900 dark:text-zinc-100">
                 This folder is empty
               </h2>
-              <p className="max-w-md text-zinc-500 dark:text-zinc-400">
+              <p className="max-w-md text-zinc-400 dark:text-zinc-400">
                 No subfolders or media files were found in this location.
               </p>
             </div>
@@ -243,8 +246,8 @@ export default async function GalleryPage({ searchParams }: PageProps) {
                 </section>
               )}
 
-              {/* Media grid */}
-              {mediaItems.length > 0 && (
+              {/* Media grid with infinite scroll */}
+              {initialMediaItems.length > 0 && (
                 <section>
                   <div className="mb-4 flex items-center justify-between">
                     <h2 className="text-sm font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
@@ -252,33 +255,19 @@ export default async function GalleryPage({ searchParams }: PageProps) {
                     </h2>
                     {totalPages > 1 && (
                       <div className="flex items-center gap-2 text-sm text-zinc-500 dark:text-zinc-400">
-                        <span>Page {currentPage} of {totalPages}</span>
-                        <div className="flex gap-1">
-                          {currentPage > 1 ? (
-                            <Link
-                              href={`/?folder=${selectedFolderId}&page=${currentPage - 1}`}
-                              className="rounded border border-zinc-300 px-2 py-0.5 text-xs hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
-                            >
-                              ← Prev
-                            </Link>
-                          ) : (
-                            <span className="rounded border border-zinc-200 px-2 py-0.5 text-xs text-zinc-300 dark:border-zinc-800 dark:text-zinc-600">← Prev</span>
-                          )}
-                          {currentPage < totalPages ? (
-                            <Link
-                              href={`/?folder=${selectedFolderId}&page=${currentPage + 1}`}
-                              className="rounded border border-zinc-300 px-2 py-0.5 text-xs hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
-                            >
-                              Next →
-                            </Link>
-                          ) : (
-                            <span className="rounded border border-zinc-200 px-2 py-0.5 text-xs text-zinc-300 dark:border-zinc-800 dark:text-zinc-600">Next →</span>
-                          )}
-                        </div>
+                        <span>
+                          Showing {finalLoadedPages * PAGE_SIZE >= totalMediaCount ? "all" : `${finalLoadedPages * PAGE_SIZE} of`} {totalMediaCount}
+                        </span>
                       </div>
                     )}
                   </div>
-                  <MediaGrid items={mediaItems} folderId={selectedFolderId ?? undefined} page={currentPage} />
+                  <MediaGrid
+                    initialItems={initialMediaItems}
+                    folderId={selectedFolderId ?? 0}
+                    initialLoadedPages={finalLoadedPages}
+                    totalCount={totalMediaCount}
+                    pageSize={PAGE_SIZE}
+                  />
                 </section>
               )}
             </>
