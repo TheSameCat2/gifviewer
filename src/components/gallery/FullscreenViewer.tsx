@@ -183,7 +183,7 @@ export function FullscreenViewer({
       </div>
 
       {/* Media */}
-      <div className="flex max-h-[85vh] max-w-full items-center justify-center p-4">
+      <div className="relative h-[85vh] w-[calc(100vw-2rem)] max-w-[calc(100vw-2rem)] p-4">
         {isVideo ? (
           <video
             src={mediaSrc}
@@ -191,17 +191,17 @@ export function FullscreenViewer({
             autoPlay
             loop
             playsInline
-            className="max-h-[85vh] max-w-full object-contain"
+            className="h-full w-full object-contain"
           />
         ) : (
           <Image
             src={mediaSrc}
             alt={item.filename}
-            width={item.width ?? 1600}
-            height={item.height ?? 900}
+            fill
             unoptimized
             priority
-            className="max-h-[85vh] max-w-full object-contain"
+            sizes="100vw"
+            className="object-contain"
           />
         )}
       </div>
