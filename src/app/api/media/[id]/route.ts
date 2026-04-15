@@ -4,7 +4,7 @@ import { existsSync, createReadStream } from "node:fs";
 import { Readable } from "node:stream";
 import path from "node:path";
 import { NextResponse } from "next/server";
-import { getMediaById, updateMediaRating, getTagsForMedia, addMediaTag, removeMediaTag, updateMediaLocation, moveMediaOneStep } from "@/lib/db/media";
+import { getMediaById, updateMediaRating, getTagsForMedia, addMediaTag, removeMediaTag, updateMediaLocation, moveMediaOneStep, deleteMedia } from "@/lib/db/media";
 import { getFolderById } from "@/lib/db/folders";
 import { resolveMediaPath } from "@/lib/media/pathing";
 import { getConfig } from "@/lib/config";
@@ -182,4 +182,28 @@ export async function PATCH(
   }
 
   return NextResponse.json({ error: "Unknown action" }, { status: 400 });
+}
+
+export async function DELETE(
+  _request: Request,
+  context: { params: Promise<{ id: string }> }
+) {
+  const { id } = await context.params;
+
+  const parsedId = Number(id);
+  if (!Number.isInteger(parsedId) || parsedId <= 0) {
+    return NextResponse.json({ error: "Invalid id" }, { status: 400 });
+  }
+
+  const row = getMediaById(parsedId);
+  if (!row) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
+  const deleted = deleteMedia(parsedId);
+  if (!deleted) {
+    return NextResponse.json({ error: "Failed to delete" }, { status: 500 });
+  }
+
+  return NextResponse.json({ ok: true, deleted: { id: parsedId, filename: deleted.filename } });
 }
