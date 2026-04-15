@@ -84,6 +84,15 @@ function initializeSchema(database: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_folders_parent ON folders(parent_id);
     CREATE INDEX IF NOT EXISTS idx_folders_path ON folders(path);
     CREATE INDEX IF NOT EXISTS idx_scan_jobs_status ON scan_jobs(status);
+
+    CREATE TABLE IF NOT EXISTS clipboard (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      media_id INTEGER REFERENCES media(id) ON DELETE CASCADE,
+      operation TEXT NOT NULL CHECK (operation IN ('copy', 'cut')),
+      source_folder_id INTEGER,
+      source_relative_path TEXT NOT NULL,
+      added_at TEXT DEFAULT (datetime('now'))
+    );
   `);
 }
 

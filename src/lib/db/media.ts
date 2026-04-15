@@ -2,6 +2,10 @@
  * Database helpers for media table.
  */
 import { getDb } from "./index";
+import fs from "node:fs";
+import path from "node:path";
+import { getConfig } from "@/lib/config";
+const { existsSync, unlinkSync } = fs;
 
 export interface MediaRow {
   id: number;
@@ -206,4 +210,84 @@ export function moveMediaOneStep(
       nextId: next.id,
     };
   }
+}
+
+// --- Clipboard helpers ---
+
+export interface ClipboardItem {
+  id: number;
+  media_id: number;
+  operation: "copy" | "cut";
+  source_folder_id: number | null;
+  source_relative_path: string;
+  added_at: string;
+}
+
+/** Stage a media item on the clipboard. Clears any existing clipboard items first. */
+export function addToClipboard(mediaId: number, operation: "copy" | "cut"): ClipboardItem {
+  const db = getDb();
+  const media = getMediaById(mediaId);
+  if (!media) throw new Error("Media not found");
+
+  db.prepare("DELETE FROM clipboard").run();
+  db.prepare("INSERT INTO clipboard (media_id, operation, source_folder_id, source_relative_path) VALUES (?, ?, ?, ?)").run(
+    mediaId,
+    operation,
+    media.folder_id,
+    media.relative_path
+  );
+  const row = db.prepare("SELECT * FROM clipboard WHERE media_id = ?").get(mediaId) as ClipboardItem;
+  return row;
+}
+
+/** Get all items currently on the clipboard. */
+export function getClipboard(): ClipboardItem[] {
+  const db = getDb();
+  return db.prepare("SELECT * FROM clipboard ORDER BY added_at DESC").all() as ClipboardItem[];
+}
+
+/** Clear the entire clipboard. */
+export function clearClipboard(): void {
+  const db = getDb();
+  db.prepare("DELETE FROM clipboard").run();
+}
+
+/** Remove a specific item from the clipboard. */
+export function removeFromClipboard(mediaId: number): void {
+  const db = getDb();
+  db.prepare("DELETE FROM clipboard WHERE media_id = ?").run(mediaId);
+}
+
+// --- Delete media ---
+
+/** Physically delete a media file from disk and remove it from the DB.
+ *  Returns the deleted media row for potential undo, or null if not found. */
+export function deleteMedia(mediaId: number): MediaRow | null {
+  const db = getDb();
+  const media = getMediaById(mediaId);
+  if (!media) return null;
+
+  const { mediaRoot } = getConfig();
+  const absPath = path.join(mediaRoot, media.relative_path);
+  try {
+    if (existsSync(absPath)) {
+      unlinkSync(absPath);
+    }
+  } catch {
+    // File may already be gone; proceed with DB deletion
+  }
+
+  // Also delete thumbnail
+  const { thumbRoot } = getConfig();
+  const thumbPath = path.join(thumbRoot, `${mediaId}.jpg`);
+  try {
+    if (existsSync(thumbPath)) {
+      unlinkSync(thumbPath);
+    }
+  } catch {
+    // Thumbnail may not exist; that's fine
+  }
+
+  db.prepare("DELETE FROM media WHERE id = ?").run(mediaId);
+  return media;
 }
