@@ -192,6 +192,93 @@ export function FullscreenViewer({
     }
   }, [item.id, item.folder_id, selectedFolderId, router]);
 
+  // --- File operations ---
+
+  const handleCut = useCallback(async () => {
+    setPending(true);
+    setError(null);
+    try {
+      await fetch("/api/clipboard", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mediaId: item.id, operation: "cut" }),
+      });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to cut");
+    } finally {
+      setPending(false);
+    }
+  }, [item.id]);
+
+  const handleCopy = useCallback(async () => {
+    setPending(true);
+    setError(null);
+    try {
+      await fetch("/api/clipboard", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mediaId: item.id, operation: "copy" }),
+      });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to copy");
+    } finally {
+      setPending(false);
+    }
+  }, [item.id]);
+
+  const handlePasteHere = useCallback(async () => {
+    if (item.folder_id === null) return;
+    setPending(true);
+    setError(null);
+    try {
+      await fetch("/api/clipboard", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "paste", targetFolderId: item.folder_id }),
+      });
+      router.refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to paste");
+    } finally {
+      setPending(false);
+    }
+  }, [item.folder_id, router]);
+
+  const handleDelete = useCallback(async () => {
+    const confirmed = window.confirm("Are you sure you want to delete this file? This cannot be undone.");
+    if (!confirmed) return;
+    setPending(true);
+    setError(null);
+    try {
+      await fetch(`/api/media/${item.id}`, { method: "DELETE" });
+      router.push(backHref);
+      router.refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to delete");
+    } finally {
+      setPending(false);
+    }
+  }, [item.id, backHref, router]);
+
+  const handleUpload = useCallback(async () => {
+    if (item.folder_id === null) return;
+    const input = document.createElement("input");
+    input.type = "file";
+    input.multiple = true;
+    input.accept = "image/*,video/webm,.gif";
+    input.onchange = async () => {
+      if (!input.files) return;
+      for (const file of Array.from(input.files)) {
+        const fd = new FormData();
+        fd.append("file", file);
+        fd.append("targetFolderId", String(item.folder_id));
+        await fetch("/api/upload", { method: "POST", body: fd });
+      }
+      router.refresh();
+    };
+    input.click();
+  }, [item.folder_id, router]);
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90">
       {/* Close button */}
@@ -326,8 +413,8 @@ export function FullscreenViewer({
         </div>
 
         {/* Move / Sort controls */}
-        <div className="mt-2 flex items-center justify-center gap-2">
-          <span className="text-xs text-zinc-400">Move:</span>
+        <div className="mt-2 flex items-center justify-center gap-2 flex-wrap">
+          <span className="text-xs text-zinc-400">Sort:</span>
           <button
             onClick={() => handleSort("earlier")}
             disabled={pending}
@@ -367,6 +454,50 @@ export function FullscreenViewer({
             className="rounded bg-white/20 px-2 py-0.5 text-xs text-white hover:bg-white/30 disabled:opacity-50"
           >
             Move
+          </button>
+        </div>
+
+        {/* File operations */}
+        <div className="mt-2 flex items-center justify-center gap-2 flex-wrap">
+          <button
+            onClick={handleCut}
+            disabled={pending}
+            className="rounded bg-white/20 px-2 py-0.5 text-xs text-white hover:bg-white/30 disabled:opacity-50"
+          >
+            ✂ Cut
+          </button>
+          <button
+            onClick={handleCopy}
+            disabled={pending}
+            className="rounded bg-white/20 px-2 py-0.5 text-xs text-white hover:bg-white/30 disabled:opacity-50"
+          >
+            📋 Copy
+          </button>
+          {item.folder_id !== null && (
+            <button
+              onClick={handlePasteHere}
+              disabled={pending}
+              className="rounded bg-white/20 px-2 py-0.5 text-xs text-white hover:bg-white/30 disabled:opacity-50"
+            >
+              📌 Paste here
+            </button>
+          )}
+          {item.folder_id !== null && (
+            <button
+              onClick={handleUpload}
+              disabled={pending}
+              className="rounded bg-white/20 px-2 py-0.5 text-xs text-white hover:bg-white/30 disabled:opacity-50"
+            >
+              + Upload
+            </button>
+          )}
+          <span className="mx-1 text-zinc-500">|</span>
+          <button
+            onClick={handleDelete}
+            disabled={pending}
+            className="rounded bg-red-600/40 px-2 py-0.5 text-xs text-white hover:bg-red-600/60 disabled:opacity-50"
+          >
+            🗑 Delete
           </button>
         </div>
 

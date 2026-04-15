@@ -3,7 +3,9 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import Link from "next/link";
 import Image from "next/image";
+import { useRouter } from "next/navigation";
 import { MediaRow } from "@/lib/db/media";
+import { ContextMenu, ContextMenuEntry } from "./ContextMenu";
 
 interface MediaGridProps {
   initialItems: MediaRow[];
@@ -19,7 +21,10 @@ function isVideoMime(mimeType: string | null): boolean {
 
 type MediaItem = MediaRow;
 
-
+interface ClipboardState {
+  mediaId: number;
+  operation: "copy" | "cut";
+}
 
 export function MediaGrid({
   initialItems,
@@ -28,6 +33,7 @@ export function MediaGrid({
   totalCount,
   pageSize,
 }: MediaGridProps) {
+  const router = useRouter();
   const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
 
   const [items, setItems] = useState<MediaItem[]>(initialItems);
@@ -35,6 +41,29 @@ export function MediaGrid({
   const [isLoading, setIsLoading] = useState(false);
   const sentinelRef = useRef<HTMLDivElement>(null);
   const hasMore = loadedPages < totalPages;
+
+  // Clipboard state
+  const [clipboard, setClipboard] = useState<ClipboardState | null>(null);
+
+  // Context menu state
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; item: MediaItem } | null>(null);
+
+  // Fetch clipboard state on mount and after folder changes
+  useEffect(() => {
+    fetch("/api/clipboard")
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.items && data.items.length > 0) {
+          setClipboard({
+            mediaId: data.items[0].media_id,
+            operation: data.items[0].operation,
+          });
+        } else {
+          setClipboard(null);
+        }
+      })
+      .catch(() => {});
+  }, [folderId]);
 
   // Update URL when loaded pages change
   const updateUrl = useCallback(
@@ -103,6 +132,67 @@ export function MediaGrid({
     return () => observer.disconnect();
   }, [fetchNextPage, hasMore, isLoading]);
 
+  // --- Clipboard operations ---
+
+  const handleCut = useCallback(async (mediaId: number) => {
+    await fetch("/api/clipboard", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mediaId, operation: "cut" }),
+    });
+    setClipboard({ mediaId, operation: "cut" });
+  }, []);
+
+  const handleCopy = useCallback(async (mediaId: number) => {
+    await fetch("/api/clipboard", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mediaId, operation: "copy" }),
+    });
+    setClipboard({ mediaId, operation: "copy" });
+  }, []);
+
+  const handlePaste = useCallback(async () => {
+    if (!clipboard) return;
+    await fetch("/api/clipboard", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "paste", targetFolderId: folderId }),
+    });
+    setClipboard(null);
+    router.refresh();
+  }, [clipboard, folderId, router]);
+
+  const handleDelete = useCallback(async (mediaId: number) => {
+    const confirmed = window.confirm("Are you sure you want to delete this file?");
+    if (!confirmed) return;
+    await fetch(`/api/media/${mediaId}`, { method: "DELETE" });
+    setItems((prev) => prev.filter((i) => i.id !== mediaId));
+    // If the deleted item was on the clipboard, clear it
+    if (clipboard?.mediaId === mediaId) {
+      setClipboard(null);
+    }
+    router.refresh();
+  }, [clipboard, router]);
+
+  const handleUpload = useCallback(async () => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.multiple = true;
+    input.accept = "image/*,video/webm,.gif";
+    input.onchange = async () => {
+      if (!input.files) return;
+      for (const file of Array.from(input.files)) {
+        const fd = new FormData();
+        fd.append("file", file);
+        fd.append("targetFolderId", String(folderId));
+        await fetch("/api/upload", { method: "POST", body: fd });
+      }
+      router.refresh();
+    };
+    input.click();
+  }, [folderId, router]);
+
   if (items.length === 0) return null;
 
   // Build href using current loadedPages state
@@ -114,49 +204,115 @@ export function MediaGrid({
     return `?${params.toString()}`;
   };
 
+  const contextMenuItems = (mediaItem: MediaItem): ContextMenuEntry[] => {
+    const entries: ContextMenuEntry[] = [
+      { label: "Cut", icon: "✂", action: () => handleCut(mediaItem.id) },
+      { label: "Copy", icon: "📋", action: () => handleCopy(mediaItem.id) },
+    ];
+
+    if (clipboard !== null) {
+      entries.push({ separator: true });
+      entries.push({
+        label: `Paste ${clipboard.operation} here`,
+        icon: "📌",
+        action: handlePaste,
+        disabled: clipboard.mediaId === mediaItem.id,
+      });
+    }
+
+    entries.push({ separator: true });
+    entries.push({
+      label: "Delete",
+      icon: "🗑",
+      action: () => handleDelete(mediaItem.id),
+      danger: true,
+    });
+
+    return entries;
+  };
+
   return (
     <>
+      {/* Toolbar: Upload + Paste */}
+      <div className="mb-3 flex gap-2">
+        <button
+          onClick={handleUpload}
+          className="rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700"
+        >
+          + Upload
+        </button>
+        {clipboard !== null && (
+          <button
+            onClick={handlePaste}
+            className="rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700"
+          >
+            📌 Paste ({clipboard.operation})
+          </button>
+        )}
+      </div>
+
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
         {items.map((item) => {
           const isVideo = isVideoMime(item.mime_type);
           const href = buildHref(item.id);
           const thumbSrc = `/api/thumbs/${item.id}`;
           const mediaSrc = `/api/media/${item.id}`;
+          const isCutSource = clipboard?.operation === "cut" && clipboard?.mediaId === item.id;
 
           return (
-            <Link
+            <div
               key={item.id}
-              href={href}
-              className="group relative flex aspect-square items-center justify-center overflow-hidden rounded-lg bg-zinc-100 dark:bg-zinc-800"
+              className={`group relative flex aspect-square items-center justify-center overflow-hidden rounded-lg bg-zinc-100 dark:bg-zinc-800 ${
+                isCutSource ? "ring-2 ring-yellow-400 opacity-60" : ""
+              }`}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                setCtxMenu({ x: e.clientX, y: e.clientY, item });
+              }}
             >
-              {isVideo ? (
-                <video
-                  src={mediaSrc}
-                  autoPlay
-                  muted
-                  loop
-                  playsInline
-                  className="h-full w-full object-cover"
-                  preload="metadata"
-                />
-              ) : (
-                <Image
-                  src={thumbSrc}
-                  alt={item.filename}
-                  fill
-                  unoptimized
-                  sizes="(min-width: 1280px) 16vw, (min-width: 1024px) 20vw, (min-width: 768px) 25vw, 50vw"
-                  className="object-cover"
-                />
-              )}
-              {/* Overlay with filename */}
-              <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/60 to-transparent px-2 py-2 opacity-0 transition-opacity group-hover:opacity-100">
-                <p className="truncate text-xs text-white">{item.filename}</p>
-              </div>
-            </Link>
+              <Link
+                href={href}
+                className="absolute inset-0"
+              >
+                {isVideo ? (
+                  <video
+                    src={mediaSrc}
+                    autoPlay
+                    muted
+                    loop
+                    playsInline
+                    className="h-full w-full object-cover"
+                    preload="metadata"
+                  />
+                ) : (
+                  <Image
+                    src={thumbSrc}
+                    alt={item.filename}
+                    fill
+                    unoptimized
+                    sizes="(min-width: 1280px) 16vw, (min-width: 1024px) 20vw, (min-width: 768px) 25vw, 50vw"
+                    className="object-cover"
+                  />
+                )}
+                {/* Overlay with filename */}
+                <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/60 to-transparent px-2 py-2 opacity-0 transition-opacity group-hover:opacity-100">
+                  <p className="truncate text-xs text-white">{item.filename}</p>
+                </div>
+              </Link>
+            </div>
           );
         })}
       </div>
+
+      {/* Context menu */}
+      {ctxMenu && (
+        <ContextMenu
+          x={ctxMenu.x}
+          y={ctxMenu.y}
+          items={contextMenuItems(ctxMenu.item)}
+          onClose={() => setCtxMenu(null)}
+        />
+      )}
 
       {/* Sentinel element for IntersectionObserver */}
       {hasMore && (
