@@ -1,7 +1,7 @@
 import { stat } from "node:fs/promises";
 import { createReadStream } from "node:fs";
 import { Readable } from "node:stream";
-import path from "node:path";
+import path from "path";
 import { NextResponse } from "next/server";
 import { getMediaById } from "@/lib/db/media";
 import { resolveMediaPath } from "@/lib/media/pathing";
@@ -17,10 +17,14 @@ function thumbContentType(p: string): string {
 export const runtime = "nodejs";
 
 export async function GET(
-  _request: Request,
+  request: Request,
   context: { params: Promise<{ id: string }> }
 ) {
   const { id } = await context.params;
+  
+  // Check for size parameter (small or large, default large)
+  const url = new URL(request.url);
+  const size = url.searchParams.get("size") === "small" ? "small" : "large";
 
   const parsedId = Number(id);
   if (!Number.isInteger(parsedId) || parsedId <= 0) {
@@ -52,7 +56,8 @@ export async function GET(
     parsedId,
     row.relative_path,
     row.media_type ?? "image",
-    sourceStat.mtime
+    sourceStat.mtime,
+    size
   );
 
   if (thumbPath) {
@@ -69,7 +74,7 @@ export async function GET(
         headers: {
           "Content-Type": thumbContentType(thumbPath),
           "Content-Length": thumbStat.size.toString(),
-          "Cache-Control": "private, max-age=300",
+          "Cache-Control": "public, max-age=31536000, immutable",
         },
       });
     }
@@ -82,7 +87,7 @@ export async function GET(
     headers: {
       "Content-Type": row.mime_type ?? "application/octet-stream",
       "Content-Length": sourceStat.size.toString(),
-      "Cache-Control": "private, max-age=60",
+      "Cache-Control": "public, max-age=31536000, immutable",
     },
   });
 }
