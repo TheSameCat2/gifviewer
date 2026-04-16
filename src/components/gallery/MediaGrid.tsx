@@ -1,11 +1,12 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { MediaRow } from "@/lib/db/media";
 import { ContextMenu, ContextMenuEntry } from "./ContextMenu";
+import { blurhashToDataUrl } from "@/lib/media/blurhash";
 
 interface MediaGridProps {
   initialItems: MediaRow[];
@@ -26,6 +27,50 @@ interface ClipboardState {
   operation: "copy" | "cut";
 }
 
+/**
+ * Renders a blurhash as a background placeholder
+ */
+function BlurhashPlaceholder({ 
+  hash, 
+  width = 32, 
+  height = 32,
+  style 
+}: { 
+  hash: string; 
+  width?: number; 
+  height?: number;
+  style?: React.CSSProperties;
+}) {
+  const dataUrl = useMemo(() => {
+    try {
+      return blurhashToDataUrl(hash, width, height);
+    } catch {
+      return null;
+    }
+  }, [hash, width, height]);
+
+  if (!dataUrl) {
+    return (
+      <div 
+        className="absolute inset-0 bg-zinc-200 dark:bg-zinc-700 animate-pulse" 
+        style={style}
+      />
+    );
+  }
+
+  return (
+    <div 
+      className="absolute inset-0" 
+      style={{ 
+        backgroundImage: `url(${dataUrl})`,
+        backgroundSize: 'cover',
+        backgroundPosition: 'center',
+        ...style 
+      }} 
+    />
+  );
+}
+
 export function MediaGrid({
   initialItems,
   folderId,
@@ -41,6 +86,10 @@ export function MediaGrid({
   const [isLoading, setIsLoading] = useState(false);
   const sentinelRef = useRef<HTMLDivElement>(null);
   const hasMore = loadedPages < totalPages;
+
+  // Track loaded thumbnails for preload
+  const [loadedThumbs, setLoadedThumbs] = useState<Set<number>>(new Set());
+  const itemRefs = useRef<Map<number, HTMLDivElement>>(new Map());
 
   // Clipboard state
   const [clipboard, setClipboard] = useState<ClipboardState | null>(null);
@@ -64,6 +113,37 @@ export function MediaGrid({
       })
       .catch(() => {});
   }, [folderId]);
+
+  // Preload thumbnails for items about to enter viewport
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          const id = Number(entry.target.getAttribute("data-media-id"));
+          if (entry.isIntersecting && !loadedThumbs.has(id)) {
+            // Preload the thumbnail
+            const img = new window.Image();
+            img.src = `/api/thumbs/${id}?size=small`;
+            img.onload = () => {
+              setLoadedThumbs((prev) => new Set(prev).add(id));
+            };
+            // Mark as loaded even if it fails (to avoid retrying)
+            img.onerror = () => {
+              setLoadedThumbs((prev) => new Set(prev).add(id));
+            };
+          }
+        });
+      },
+      { rootMargin: "200px" }
+    );
+
+    // Observe all item refs
+    itemRefs.current.forEach((element) => {
+      observer.observe(element);
+    });
+
+    return () => observer.disconnect();
+  }, [items, loadedThumbs]);
 
   // Update URL when loaded pages change
   const updateUrl = useCallback(
@@ -112,6 +192,7 @@ export function MediaGrid({
     setItems(initialItems);
     setLoadedPages(initialLoadedPages);
     setIsLoading(false);
+    setLoadedThumbs(new Set());
   }, [folderId, initialItems, initialLoadedPages]);
 
   // IntersectionObserver for infinite scroll
@@ -255,13 +336,19 @@ export function MediaGrid({
         {items.map((item) => {
           const isVideo = isVideoMime(item.mime_type);
           const href = buildHref(item.id);
-          const thumbSrc = `/api/thumbs/${item.id}`;
+          const thumbSrc = `/api/thumbs/${item.id}?size=small`;
           const mediaSrc = `/api/media/${item.id}`;
           const isCutSource = clipboard?.operation === "cut" && clipboard?.mediaId === item.id;
+          const isThumbLoaded = loadedThumbs.has(item.id);
 
           return (
             <div
               key={item.id}
+              ref={(el) => {
+                if (el) itemRefs.current.set(item.id, el);
+                else itemRefs.current.delete(item.id);
+              }}
+              data-media-id={item.id}
               className={`group relative flex aspect-square items-center justify-center overflow-hidden rounded-lg bg-zinc-100 dark:bg-zinc-800 ${
                 isCutSource ? "ring-2 ring-yellow-400 opacity-60" : ""
               }`}
@@ -275,24 +362,37 @@ export function MediaGrid({
                 className="absolute inset-0"
               >
                 {isVideo ? (
-                  <video
-                    src={mediaSrc}
-                    autoPlay
-                    muted
-                    loop
-                    playsInline
-                    className="h-full w-full object-cover"
-                    preload="metadata"
-                  />
+                  <>
+                    {/* Blurhash placeholder for video */}
+                    {item.thumb_blurhash && (
+                      <BlurhashPlaceholder hash={item.thumb_blurhash} />
+                    )}
+                    {/* Use thumbnail for grid, full video on click */}
+                    <Image
+                      src={thumbSrc}
+                      alt={item.filename}
+                      fill
+                      unoptimized
+                      sizes="(min-width: 1280px) 16vw, (min-width: 1024px) 20vw, (min-width: 768px) 25vw, 50vw"
+                      className={`object-cover transition-opacity ${isThumbLoaded ? "opacity-100" : "opacity-0"}`}
+                    />
+                  </>
                 ) : (
-                  <Image
-                    src={thumbSrc}
-                    alt={item.filename}
-                    fill
-                    unoptimized
-                    sizes="(min-width: 1280px) 16vw, (min-width: 1024px) 20vw, (min-width: 768px) 25vw, 50vw"
-                    className="object-cover"
-                  />
+                  <>
+                    {/* Blurhash placeholder for images */}
+                    {item.thumb_blurhash && (
+                      <BlurhashPlaceholder hash={item.thumb_blurhash} />
+                    )}
+                    <Image
+                      src={thumbSrc}
+                      alt={item.filename}
+                      fill
+                      unoptimized
+                      sizes="(min-width: 1280px) 16vw, (min-width: 1024px) 20vw, (min-width: 768px) 25vw, 50vw"
+                      className={`object-cover transition-opacity ${isThumbLoaded ? "opacity-100" : "opacity-0"}`}
+                      onLoad={() => setLoadedThumbs((prev) => new Set(prev).add(item.id))}
+                    />
+                  </>
                 )}
                 {/* Overlay with filename */}
                 <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/60 to-transparent px-2 py-2 opacity-0 transition-opacity group-hover:opacity-100">
