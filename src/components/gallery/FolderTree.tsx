@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { getAllFolders } from "@/lib/db/folders";
+import { memo } from "react";
 
 interface FolderTreeProps {
   selectedId?: number;
@@ -49,7 +50,7 @@ function sortTree(nodes: FolderNode[]): FolderNode[] {
     .map((n) => ({ ...n, children: sortTree(n.children) }));
 }
 
-function FolderItem({ node, depth, selectedId }: { node: FolderNode; depth: number; selectedId?: number }) {
+const FolderItem = memo(function FolderItem({ node, depth, selectedId }: { node: FolderNode; depth: number; selectedId?: number }) {
   const isSelected = node.id === selectedId;
   const href = `/?folder=${node.id}`;
 
@@ -92,7 +93,7 @@ function FolderItem({ node, depth, selectedId }: { node: FolderNode; depth: numb
       )}
     </li>
   );
-}
+});
 
 export function FolderTree({ selectedId }: FolderTreeProps) {
   const allFolders = getAllFolders();
@@ -100,6 +101,7 @@ export function FolderTree({ selectedId }: FolderTreeProps) {
 
   const { roots, rootNode } = buildTree(allFolders);
   const sortedRoots = sortTree(roots);
+  const displayRoots = rootNode ? sortTree(rootNode.children) : sortedRoots;
 
   // Determine if root link should be selected
   const rootSelected = selectedId === undefined || (rootNode && selectedId === rootNode.id);
@@ -128,7 +130,7 @@ export function FolderTree({ selectedId }: FolderTreeProps) {
           </Link>
         </li>
         {/* Root folder's children as top-level entries if root exists, otherwise roots as top-level */}
-        {(rootNode ? sortTree(rootNode.children) : sortedRoots).map((node) => (
+        {displayRoots.map((node) => (
           <FolderItem
             key={node.id}
             node={node}

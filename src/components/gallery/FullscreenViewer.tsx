@@ -77,6 +77,7 @@ export function FullscreenViewer({
     setError(null);
     setPending(false);
     tagInputShouldFocusRef.current = false;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- These are initial values that should only trigger reset on item.id change
   }, [item.id, item.folder_id]);
 
   // Restore tag input focus after a successful tag add

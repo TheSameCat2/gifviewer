@@ -5,9 +5,13 @@ import { NextResponse } from "next/server";
 import { getFolderById } from "@/lib/db/folders";
 import { getConfig } from "@/lib/config";
 import { isSupported, getMimeType, classifyMediaType } from "@/lib/media/pathing";
-import { getDb } from "@/lib/db/index";
+import { getDb } from "@/lib/db";
 import { probeMedia } from "@/lib/media/probe";
 import { ensureThumbnail } from "@/lib/media/thumbnails";
+import { uniqueFilename } from "@/lib/fs-utils";
+
+// 100MB max file size
+const MAX_FILE_SIZE = 100 * 1024 * 1024;
 
 export const runtime = "nodejs";
 
@@ -22,6 +26,14 @@ export async function POST(request: Request) {
   const file = formData.get("file");
   if (!(file instanceof File)) {
     return NextResponse.json({ error: "No file provided" }, { status: 400 });
+  }
+
+  // Enforce file size limit before reading content
+  if (file.size > MAX_FILE_SIZE) {
+    return NextResponse.json(
+      { error: `File too large. Maximum size is ${MAX_FILE_SIZE / (1024 * 1024)}MB` },
+      { status: 413 }
+    );
   }
 
   const targetFolderIdStr = formData.get("targetFolderId");
@@ -50,26 +62,10 @@ export async function POST(request: Request) {
     await mkdir(targetDirAbs, { recursive: true });
   }
 
-  // Generate unique filename to avoid collisions
-  function uniqueFilename(dir: string, baseName: string, extension: string): string {
-    let candidate = `${baseName}${extension}`;
-    let counter = 1;
-    while (existsSync(path.join(mediaRoot, dir, candidate))) {
-      candidate = `${baseName} (${counter})${extension}`;
-      counter++;
-    }
-    return candidate;
-  }
-
   const baseName = path.basename(filename, ext);
-  const uniqueName = uniqueFilename(targetDir, baseName, ext);
-  let relativePath: string;
-  if (targetDir) {
-    relativePath = `${targetDir}/${uniqueName}`;
-  } else {
-    relativePath = uniqueName;
-  }
-  const absPath: string = path.join(mediaRoot, relativePath);
+  const uniqueName = uniqueFilename(mediaRoot, targetDir, baseName, ext);
+  const relativePath = targetDir ? `${targetDir}/${uniqueName}` : uniqueName;
+  const absPath = path.join(mediaRoot, relativePath);
 
   // Write the file
   const arrayBuffer = await file.arrayBuffer();
@@ -83,7 +79,6 @@ export async function POST(request: Request) {
   // Probe metadata (images only; videos skip)
   let width: number | null = null;
   let height: number | null = null;
-  let durationSecs: number | null = null;
 
   if (mediaType === "image" || mediaType === "animated") {
     try {
@@ -97,19 +92,19 @@ export async function POST(request: Request) {
 
   // Insert into DB
   const db = getDb();
-  const maxRow = db.prepare("SELECT MAX(manual_order) as max_order FROM media WHERE folder_id IS ?").get(targetFolderId) as { max_order: number | null } | undefined;
+  const maxRow = db.prepare("SELECT MAX(manual_order) as max_order FROM media WHERE folder_id = ?").get(targetFolderId) as { max_order: number | null } | undefined;
   const nextOrder = (maxRow?.max_order ?? -1) + 1;
 
   const result = db.prepare(
     `INSERT INTO media (folder_id, relative_path, filename, mime_type, media_type, file_size, width, height, duration_secs, manual_order)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).run(targetFolderId, relativePath, uniqueName, mimeType, mediaType, fileSize, width, height, durationSecs, nextOrder);
+  ).run(targetFolderId, relativePath, uniqueName, mimeType, mediaType, fileSize, width, height, null, nextOrder);
 
   const mediaId = Number(result.lastInsertRowid);
 
   // Generate thumbnail asynchronously (fire and forget)
   const fileStat = await stat(absPath);
-  ensureThumbnail(mediaId, relativePath!, mediaType, fileStat.mtime).catch(() => {});
+  ensureThumbnail(mediaId, relativePath, mediaType, fileStat.mtime).catch(() => {});
 
   return NextResponse.json({
     ok: true,

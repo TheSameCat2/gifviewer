@@ -1,13 +1,15 @@
 import { stat } from "node:fs/promises";
 import { rename, copyFile, unlink } from "node:fs/promises";
-import { existsSync, createReadStream } from "node:fs";
+import { createReadStream } from "node:fs";
 import { Readable } from "node:stream";
 import path from "node:path";
 import { NextResponse } from "next/server";
-import { getMediaById, updateMediaRating, getTagsForMedia, addMediaTag, removeMediaTag, updateMediaLocation, moveMediaOneStep, deleteMedia } from "@/lib/db/media";
+import { getMediaById, updateMediaRating, getTagsForMedia, addMediaTag, removeMediaTag, moveMediaOneStep, deleteMedia } from "@/lib/db/media";
 import { getFolderById } from "@/lib/db/folders";
 import { resolveMediaPath } from "@/lib/media/pathing";
 import { getConfig } from "@/lib/config";
+import { uniqueFilename } from "@/lib/fs-utils";
+import { getDb } from "@/lib/db";
 
 export const runtime = "nodejs";
 
@@ -125,26 +127,13 @@ export async function PATCH(
       return NextResponse.json({ error: "Invalid source path" }, { status: 400 });
     }
 
-    // Capture folder path in a local const for use in nested function (TypeScript doesn't narrow through closures)
-    const folderPath = targetFolder.path;
-
-    // Build target relative path: folderPath + "/" + filename (or name (n).ext if collision)
-    function uniqueFilename(dir: string, baseName: string, ext: string): string {
-      let candidate = `${baseName}${ext}`;
-      let counter = 1;
-      while (existsSync(path.join(mediaRoot, dir, candidate))) {
-        candidate = `${baseName} (${counter})${ext}`;
-        counter++;
-      }
-      return candidate;
-    }
-
     const ext = path.extname(row.filename);
     const baseName = path.basename(row.filename, ext);
-    const targetFilename = uniqueFilename(folderPath, baseName, ext);
-    const targetRelativePath = folderPath ? `${folderPath}/${targetFilename}` : targetFilename;
+    const targetFilename = uniqueFilename(mediaRoot, targetFolder.path, baseName, ext);
+    const targetRelativePath = targetFolder.path ? `${targetFolder.path}/${targetFilename}` : targetFilename;
     const targetAbsPath = path.join(mediaRoot, targetRelativePath);
 
+    // Perform file move first
     let moved = false;
     try {
       await rename(sourcePath, targetAbsPath);
@@ -161,8 +150,16 @@ export async function PATCH(
       }
     }
 
-    // Update DB after successful move
-    updateMediaLocation(parsedId, body.targetFolderId, targetRelativePath, targetFilename);
+    // Wrap DB update in transaction with file operation for consistency
+    const db = getDb();
+    const transaction = db.transaction(() => {
+      const maxRow = db.prepare("SELECT MAX(manual_order) as max_order FROM media WHERE folder_id = ?").get(body.targetFolderId) as { max_order: number | null } | undefined;
+      const nextOrder = (maxRow?.max_order ?? -1) + 1;
+      db.prepare(
+        `UPDATE media SET folder_id = ?, relative_path = ?, filename = ?, manual_order = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`
+      ).run(body.targetFolderId, targetRelativePath, targetFilename, nextOrder, parsedId);
+    });
+    transaction();
 
     return NextResponse.json({
       ok: true,

@@ -1,11 +1,12 @@
-import { rename, copyFile, unlink, mkdir } from "node:fs/promises";
-import { existsSync } from "node:fs";
-import path from "node:path";
+import { rename, copyFile, unlink } from "node:fs/promises";
+import path from "path";
 import { NextResponse } from "next/server";
 import { addToClipboard, getClipboard, clearClipboard, getMediaById } from "@/lib/db/media";
 import { getFolderById } from "@/lib/db/folders";
-import { resolveMediaPath, toRelativePath } from "@/lib/media/pathing";
+import { resolveMediaPath } from "@/lib/media/pathing";
 import { getConfig } from "@/lib/config";
+import { uniqueFilename } from "@/lib/fs-utils";
+import { getDb } from "@/lib/db";
 
 export const runtime = "nodejs";
 
@@ -46,7 +47,6 @@ export async function DELETE() {
 }
 
 export async function PATCH(request: Request) {
-  // Paste action: POST /api/clipboard with { action: "paste", targetFolderId }
   let body: { action?: string; targetFolderId?: number };
   try {
     body = await request.json();
@@ -74,6 +74,7 @@ export async function PATCH(request: Request) {
   }
 
   const { mediaRoot } = getConfig();
+  const db = getDb();
   const results: { mediaId: number; operation: string; ok: boolean; filename?: string; error?: string }[] = [];
 
   for (const item of items) {
@@ -89,19 +90,9 @@ export async function PATCH(request: Request) {
       continue;
     }
 
-    function uniqueFilename(dir: string, baseName: string, ext: string): string {
-      let candidate = `${baseName}${ext}`;
-      let counter = 1;
-      while (existsSync(path.join(mediaRoot, dir, candidate))) {
-        candidate = `${baseName} (${counter})${ext}`;
-        counter++;
-      }
-      return candidate;
-    }
-
     const ext = path.extname(sourceMedia.filename);
     const baseName = path.basename(sourceMedia.filename, ext);
-    const targetFilename = uniqueFilename(targetFolder.path, baseName, ext);
+    const targetFilename = uniqueFilename(mediaRoot, targetFolder.path, baseName, ext);
     const targetRelativePath = targetFolder.path ? `${targetFolder.path}/${targetFilename}` : targetFilename;
     const targetAbsPath = path.join(mediaRoot, targetRelativePath);
 
@@ -110,15 +101,16 @@ export async function PATCH(request: Request) {
         // Copy the file to the destination
         await copyFile(sourceAbsPath, targetAbsPath);
 
-        // Insert new DB row for the copy (re-use create logic via scanner's insert but do it directly)
-        const { getDb } = await import("@/lib/db/index");
-        const db = getDb();
-        const maxRow = db.prepare("SELECT MAX(manual_order) as max_order FROM media WHERE folder_id = ?").get(targetFolderId) as { max_order: number | null } | undefined;
-        const nextOrder = (maxRow?.max_order ?? -1) + 1;
-        db.prepare(
-          `INSERT INTO media (folder_id, relative_path, filename, mime_type, media_type, file_size, width, height, duration_secs, manual_order)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-        ).run(targetFolderId, targetRelativePath, targetFilename, sourceMedia.mime_type, sourceMedia.media_type, sourceMedia.file_size, sourceMedia.width, sourceMedia.height, sourceMedia.duration_secs, nextOrder);
+        // Insert new DB row for the copy within a transaction
+        const transaction = db.transaction(() => {
+          const maxRow = db.prepare("SELECT MAX(manual_order) as max_order FROM media WHERE folder_id = ?").get(targetFolderId) as { max_order: number | null } | undefined;
+          const nextOrder = (maxRow?.max_order ?? -1) + 1;
+          db.prepare(
+            `INSERT INTO media (folder_id, relative_path, filename, mime_type, media_type, file_size, width, height, duration_secs, manual_order)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          ).run(targetFolderId, targetRelativePath, targetFilename, sourceMedia.mime_type, sourceMedia.media_type, sourceMedia.file_size, sourceMedia.width, sourceMedia.height, sourceMedia.duration_secs, nextOrder);
+        });
+        transaction();
 
         results.push({ mediaId: item.media_id, operation: "copy", ok: true, filename: targetFilename });
       } else {
@@ -130,6 +122,7 @@ export async function PATCH(request: Request) {
         } catch (err: unknown) {
           const code = (err as { code?: string }).code;
           if (code === "EXDEV") {
+            // Cross-device move: copy then delete source
             await copyFile(sourceAbsPath, targetAbsPath);
             await unlink(sourceAbsPath);
             moved = true;
@@ -140,8 +133,16 @@ export async function PATCH(request: Request) {
         }
 
         if (moved) {
-          const { updateMediaLocation } = await import("@/lib/db/media");
-          updateMediaLocation(item.media_id, targetFolderId, targetRelativePath, targetFilename);
+          // Update DB within a transaction
+          const transaction = db.transaction(() => {
+            const maxRow = db.prepare("SELECT MAX(manual_order) as max_order FROM media WHERE folder_id = ?").get(targetFolderId) as { max_order: number | null } | undefined;
+            const nextOrder = (maxRow?.max_order ?? -1) + 1;
+            db.prepare(
+              `UPDATE media SET folder_id = ?, relative_path = ?, filename = ?, manual_order = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`
+            ).run(targetFolderId, targetRelativePath, targetFilename, nextOrder, item.media_id);
+          });
+          transaction();
+
           results.push({ mediaId: item.media_id, operation: "cut", ok: true, filename: targetFilename });
         }
       }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef } from "react";
 
 export interface ContextMenuItem {
   label: string;
@@ -26,24 +26,36 @@ interface ContextMenuProps {
 
 export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
   const ref = useRef<HTMLDivElement>(null);
-  const [adjustedPos, setAdjustedPos] = useState({ x, y });
 
-  // Adjust position to keep menu in viewport
+  // Adjust position after mount using a timeout to allow initial render
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
-    const rect = el.getBoundingClientRect();
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
-    let ax = x;
-    let ay = y;
-    if (rect.width > 0 && x + rect.width > vw) {
-      ax = Math.max(0, vw - rect.width - 8);
-    }
-    if (rect.height > 0 && y + rect.height > vh) {
-      ay = Math.max(0, vh - rect.height - 8);
-    }
-    setAdjustedPos({ x: ax, y: ay });
+
+    const adjustPosition = () => {
+      const rect = el.getBoundingClientRect();
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      let ax = 0;
+      let ay = 0;
+      if (rect.width > 0 && x + rect.width > vw) {
+        ax = vw - rect.width - 8;
+      }
+      if (rect.height > 0 && y + rect.height > vh) {
+        ay = vh - rect.height - 8;
+      }
+      if (ax !== 0 || ay !== 0) {
+        el.style.transform = `translate(${ax}px, ${ay}px)`;
+      }
+    };
+
+    // Initial adjustment
+    adjustPosition();
+
+    // Also adjust on window resize
+    const handleResize = () => adjustPosition();
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
   }, [x, y]);
 
   // Close on click outside or Escape
@@ -72,7 +84,7 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
     <div
       ref={ref}
       className="fixed z-[100] min-w-[160px] rounded-lg border border-zinc-200 bg-white py-1 shadow-xl dark:border-zinc-700 dark:bg-zinc-800"
-      style={{ left: adjustedPos.x, top: adjustedPos.y }}
+      style={{ left: x, top: y }}
     >
       {items.map((item, i) => {
         if ("separator" in item && item.separator) {
