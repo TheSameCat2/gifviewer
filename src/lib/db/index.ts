@@ -46,7 +46,8 @@ function initializeSchema(database: Database.Database): void {
       duration_secs REAL,
       rating INTEGER DEFAULT 0,
       manual_order INTEGER DEFAULT 0,
-     fs_mtime TEXT,
+      fs_mtime TEXT,
+      thumb_blurhash TEXT,
       created_at TEXT DEFAULT (datetime('now')),
       updated_at TEXT DEFAULT (datetime('now'))
     );
@@ -74,6 +75,8 @@ function initializeSchema(database: Database.Database): void {
       files_added INTEGER DEFAULT 0,
       files_updated INTEGER DEFAULT 0,
       files_removed INTEGER DEFAULT 0,
+      thumbnails_generated INTEGER DEFAULT 0,
+      blurhashes_generated INTEGER DEFAULT 0,
       created_at TEXT DEFAULT (datetime('now'))
     );
 
@@ -94,6 +97,29 @@ function initializeSchema(database: Database.Database): void {
       added_at TEXT DEFAULT (datetime('now'))
     );
   `);
+
+  // Run migrations for existing databases
+  runMigrations(database);
+}
+
+/**
+ * Migrates existing databases to the latest schema.
+ */
+function runMigrations(database: Database.Database): void {
+  // Migration 1: Add thumb_blurhash column to media table
+  const mediaColumns = database.prepare("PRAGMA table_info(media)").all() as { name: string }[];
+  if (!mediaColumns.find(c => c.name === "thumb_blurhash")) {
+    database.exec("ALTER TABLE media ADD COLUMN thumb_blurhash TEXT");
+  }
+
+  // Migration 2: Add thumbnails_generated and blurhashes_generated to scan_jobs
+  const scanJobsColumns = database.prepare("PRAGMA table_info(scan_jobs)").all() as { name: string }[];
+  if (!scanJobsColumns.find(c => c.name === "thumbnails_generated")) {
+    database.exec("ALTER TABLE scan_jobs ADD COLUMN thumbnails_generated INTEGER DEFAULT 0");
+  }
+  if (!scanJobsColumns.find(c => c.name === "blurhashes_generated")) {
+    database.exec("ALTER TABLE scan_jobs ADD COLUMN blurhashes_generated INTEGER DEFAULT 0");
+  }
 }
 
 export interface DbStats {

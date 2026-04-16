@@ -21,6 +21,7 @@ export interface MediaRow {
   rating: number;
   manual_order: number;
   fs_mtime: string | null;
+  thumb_blurhash: string | null;
   created_at: string;
   updated_at: string;
 }
