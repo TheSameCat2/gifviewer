@@ -4,6 +4,7 @@
 export * from "./pathing";
 export * from "./probe";
 export * from "./thumbnails";
+export * from "./blurhash";
 export * from "./scanner";
 
 // Re-export database media helpers
