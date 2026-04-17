@@ -49,6 +49,13 @@ export const getAllMedia = listMedia;
 
 // --- Tag support ---
 
+export function getAllTags(): TagRow[] {
+  const db = getDb();
+  return db
+    .prepare("SELECT id, name, created_at FROM tags ORDER BY name")
+    .all() as TagRow[];
+}
+
 export interface TagRow {
   id: number;
   name: string;

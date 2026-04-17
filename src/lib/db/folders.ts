@@ -189,3 +189,107 @@ export function hasFolders(): boolean {
   const row = db.prepare("SELECT COUNT(*) as count FROM folders").get() as { count: number };
   return row.count > 0;
 }
+
+// --- Descendant folder IDs via recursive CTE ---
+
+/**
+ * Get all descendant folder IDs under a given folder using a recursive CTE.
+ * Returns an empty array if the folder has no children.
+ */
+export function getDescendantFolderIds(folderId: number): number[] {
+  const db = getDb();
+  const rows = db
+    .prepare(`
+      WITH RECURSIVE descendants AS (
+        SELECT id FROM folders WHERE parent_id = ?
+        UNION ALL
+        SELECT f.id FROM folders f INNER JOIN descendants d ON f.parent_id = d.id
+      )
+      SELECT id FROM descendants
+    `)
+    .all(folderId) as { id: number }[];
+  return rows.map((r) => r.id);
+}
+
+// --- Tag lookups ---
+
+/** Get all tags ordered by name. */
+export function getAllTags(): import("./media").TagRow[] {
+  const db = getDb();
+  return db
+    .prepare("SELECT * FROM tags ORDER BY name")
+    .all() as import("./media").TagRow[];
+}
+
+// --- Search with tag filtering and rating threshold ---
+
+export interface SearchMediaOptions {
+  /** Limit results. */
+  limit?: number;
+  /** Offset for pagination. */
+  offset?: number;
+  /** Folder ID to search under (includes all descendants). Pass null for root-level only. */
+  folderId?: number | null;
+  /** Minimum rating threshold (inclusive). 0 = no filter. */
+  minRating?: number;
+  /** Tag IDs to filter by (media must have ALL of these tags). */
+  tagIds?: number[];
+}
+
+/**
+ * Search media with optional folder hierarchy scope, rating threshold, and tag filtering.
+ * Uses a recursive CTE to include all descendant folders when folderId is set.
+ * Returns { items, totalCount } for proper pagination support.
+ */
+export function searchMedia(options: SearchMediaOptions = {}): { items: import("./media").MediaRow[]; totalCount: number } {
+  const db = getDb();
+  const { limit = 100, offset = 0, folderId = null, minRating = 0, tagIds } = options;
+
+  const conditions: string[] = [];
+  const params: (number | string)[] = [];
+
+  // Folder scope: either a specific folder + descendants or all media
+  if (folderId !== null) {
+    const folderIds = [folderId, ...getDescendantFolderIds(folderId)];
+    const placeholders = folderIds.map(() => "?").join(", ");
+    conditions.push(`m.folder_id IN (${placeholders})`);
+    params.push(...folderIds);
+  }
+
+  // Rating threshold
+  if (minRating > 0) {
+    conditions.push("m.rating >= ?");
+    params.push(minRating);
+  }
+
+  // Tag filtering: media must have ALL specified tags
+  if (tagIds && tagIds.length > 0) {
+    const tagPlaceholders = tagIds.map(() => "?").join(", ");
+    conditions.push(`
+      m.id IN (
+        SELECT mt.media_id FROM media_tags mt
+        WHERE mt.tag_id IN (${tagPlaceholders})
+        GROUP BY mt.media_id
+        HAVING COUNT(DISTINCT mt.tag_id) = ?
+      )
+    `);
+    params.push(...tagIds, tagIds.length);
+  }
+
+  const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+
+  // Count total matching media
+  const countRow = db
+    .prepare(`SELECT COUNT(DISTINCT m.id) as count FROM media m ${where}`)
+    .get(...params) as { count: number };
+  const totalCount = countRow.count;
+
+  // Fetch paginated items
+  const items = db
+    .prepare(
+      `SELECT DISTINCT m.* FROM media m ${where} ORDER BY m.id DESC LIMIT ? OFFSET ?`
+    )
+    .all(...params, limit, offset) as import("./media").MediaRow[];
+
+  return { items, totalCount };
+}

@@ -1,22 +1,24 @@
 import Link from "next/link";
 import { getConfig } from "@/lib/config";
-import { getRootFolder, getFolderById, getFolderChildren, getMediaByFolderPaginated, getMediaCountByFolder, getAdjacentMediaIds, getMediaPageForFolderItem, getFolderBreadcrumbs, hasFolders, getAllFolders } from "@/lib/db/folders";
+import { getRootFolder, getFolderById, getFolderChildren, getMediaByFolderPaginated, getMediaCountByFolder, getAdjacentMediaIds, getMediaPageForFolderItem, getFolderBreadcrumbs, hasFolders, getAllFolders, searchMedia } from "@/lib/db/folders";
 import { getMediaById, getTagsForMedia } from "@/lib/db/media";
+import { getAllTags } from "@/lib/db/media";
 import { FolderTree } from "@/components/gallery/FolderTree";
 import { MediaGrid } from "@/components/gallery/MediaGrid";
 import { FullscreenViewer } from "@/components/gallery/FullscreenViewer";
 import { ScanLibraryButton } from "@/components/gallery/ScanLibraryButton";
+import { FilterModeClient } from "@/components/gallery/FilterModeClient";
 import { PAGE_SIZE } from "@/lib/gallery";
 
 // Force dynamic rendering to prevent build-time DB access and allow env vars
 export const dynamic = "force-dynamic";
 
 interface PageProps {
-  searchParams: Promise<{ folder?: string; media?: string; page?: string }>;
+  searchParams: Promise<{ folder?: string; media?: string; page?: string; filter?: string; tags?: string; rating?: string }>;
 }
 
 export default async function GalleryPage({ searchParams }: PageProps) {
-  const { folder: folderParam, media: mediaParam, page: pageParam } = await searchParams;
+  const { folder: folderParam, media: mediaParam, page: pageParam, filter: filterParam, tags: tagsParam, rating: ratingParam } = await searchParams;
   const config = getConfig();
 
   // Parse folder ID safely
@@ -131,6 +133,31 @@ export default async function GalleryPage({ searchParams }: PageProps) {
     path: f.path,
   }));
 
+  // Parse filter state from search params
+  const isFilterMode = filterParam === "1";
+  const activeTags = tagsParam
+    ? tagsParam.split(",").map(Number).filter((n) => Number.isInteger(n) && n > 0)
+    : [];
+  const activeRating = ratingParam ? Math.max(0, Math.min(5, parseInt(ratingParam, 10) || 0)) : 0;
+
+  // Get all available tags
+  const allTags = getAllTags();
+
+  // Filter-mode data: load search results server-side
+  let filterInitialItems: import("@/lib/db/media").MediaRow[] = [];
+  let filterTotalCount = 0;
+  if (isFilterMode && (activeTags.length > 0 || activeRating > 0)) {
+    const raw = searchMedia({
+      folderId: selectedFolderId,
+      minRating: activeRating,
+      tagIds: activeTags,
+      limit: finalLoadedPages * PAGE_SIZE,
+      offset: 0,
+    });
+    filterInitialItems = raw.items;
+    filterTotalCount = raw.totalCount;
+  }
+
   return (
     <div className="min-h-screen flex flex-col bg-zinc-50 dark:bg-zinc-950">
       {/* Header */}
@@ -141,6 +168,19 @@ export default async function GalleryPage({ searchParams }: PageProps) {
           </h1>
           <div className="flex items-center gap-4">
             <ScanLibraryButton currentFolder={selectedFolderId?.toString()} />
+            {selectedFolderId !== null && (
+              <a
+                href={`/?filter=1&folder=${selectedFolderId}`}
+                className={`flex items-center gap-2 rounded-lg border px-3 py-1.5 text-sm font-medium transition ${
+                  isFilterMode
+                    ? "border-blue-300 bg-blue-50 text-blue-700 dark:border-blue-700 dark:bg-blue-900/30 dark:text-blue-300"
+                    : "border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700"
+                }`}
+              >
+                <span>⚙️</span>
+                <span>Filter</span>
+              </a>
+            )}
           </div>
         </div>
       </header>
@@ -190,6 +230,14 @@ export default async function GalleryPage({ searchParams }: PageProps) {
                   )}
                 </span>
               ))}
+              {isFilterMode && (
+                <span className="flex items-center gap-2">
+                  <span className="text-zinc-400">/</span>
+                  <span className="font-medium text-blue-600 dark:text-blue-400">
+                    Filtered Results
+                  </span>
+                </span>
+              )}
             </nav>
           )}
 
@@ -206,6 +254,46 @@ export default async function GalleryPage({ searchParams }: PageProps) {
               </p>
               <ScanLibraryButton />
             </div>
+          ) : isFilterMode ? (
+            /* Filter mode: show filter bar + results */
+            <>
+              <FilterModeClient
+                folderId={selectedFolderId ?? 0}
+                allTags={allTags}
+                activeTags={activeTags}
+                activeRating={activeRating}
+                isFilterMode={isFilterMode}
+              />
+              {filterTotalCount === 0 ? (
+                <div className="flex flex-col items-center justify-center py-24 text-center">
+                  <div className="mb-6 text-6xl">🔍</div>
+                  <h2 className="mb-2 text-xl font-semibold text-zinc-900 dark:text-zinc-100">
+                    No matching media
+                  </h2>
+                  <p className="max-w-md text-zinc-500 dark:text-zinc-400">
+                    No media items match the current filters in this folder or its subfolders.
+                  </p>
+                </div>
+              ) : (
+                <>
+                  <div className="mb-4 flex items-center justify-between">
+                    <h2 className="text-sm font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                      Media ({filterTotalCount})
+                    </h2>
+                  </div>
+                  <MediaGrid
+                    initialItems={filterInitialItems}
+                    folderId={selectedFolderId ?? 0}
+                    initialLoadedPages={finalLoadedPages}
+                    totalCount={filterTotalCount}
+                    pageSize={PAGE_SIZE}
+                    isFilterMode={true}
+                    filterTags={activeTags}
+                    filterRating={activeRating}
+                  />
+                </>
+              )}
+            </>
           ) : selectedFolder === null ? (
             /* Empty state: no folder selected (shouldn't normally happen with root fallback) */
             <div className="flex flex-col items-center justify-center py-24 text-center">

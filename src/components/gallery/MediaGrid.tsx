@@ -14,6 +14,12 @@ interface MediaGridProps {
   initialLoadedPages: number;
   totalCount: number;
   pageSize: number;
+  /** When true, infinite scroll uses /api/search instead of /api/folders */
+  isFilterMode?: boolean;
+  /** Active tag IDs — only used when isFilterMode is true */
+  filterTags?: number[];
+  /** Active rating filter — only used when isFilterMode is true */
+  filterRating?: number;
 }
 
 function isVideoMime(mimeType: string | null): boolean {
@@ -77,6 +83,9 @@ export function MediaGrid({
   initialLoadedPages,
   totalCount,
   pageSize,
+  isFilterMode = false,
+  filterTags = [],
+  filterRating = 0,
 }: MediaGridProps) {
   const router = useRouter();
   const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
@@ -165,7 +174,19 @@ export function MediaGrid({
     const nextPage = loadedPages + 1;
 
     try {
-      const res = await fetch(`/api/folders/${folderId}/media?page=${nextPage}`);
+      let url: string;
+      if (isFilterMode) {
+        const params = new URLSearchParams();
+        if (folderId > 0) params.set("folder", String(folderId));
+        if (filterTags.length > 0) params.set("tags", filterTags.join(","));
+        if (filterRating > 0) params.set("rating", String(filterRating));
+        params.set("page", String(nextPage));
+        url = `/api/search?${params.toString()}`;
+      } else {
+        url = `/api/folders/${folderId}/media?page=${nextPage}`;
+      }
+
+      const res = await fetch(url);
       if (!res.ok) throw new Error("Failed to fetch");
 
       const data = await res.json();
@@ -185,7 +206,7 @@ export function MediaGrid({
     } finally {
       setIsLoading(false);
     }
-  }, [folderId, hasMore, isLoading, loadedPages, updateUrl]);
+  }, [folderId, hasMore, isLoading, loadedPages, updateUrl, isFilterMode, filterTags, filterRating]);
 
   // Resync local state from server props when they change (e.g., navigation between folders)
   useEffect(() => {
