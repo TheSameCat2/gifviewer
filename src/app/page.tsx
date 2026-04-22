@@ -8,6 +8,7 @@ import { MediaGrid } from "@/components/gallery/MediaGrid";
 import { FullscreenViewer } from "@/components/gallery/FullscreenViewer";
 import { ScanLibraryButton } from "@/components/gallery/ScanLibraryButton";
 import { FilterModeClient } from "@/components/gallery/FilterModeClient";
+import { ScrollToTop } from "@/components/gallery/ScrollToTop";
 import { PAGE_SIZE } from "@/lib/gallery";
 
 // Force dynamic rendering to prevent build-time DB access and allow env vars
@@ -352,6 +353,7 @@ export default async function GalleryPage({ searchParams }: PageProps) {
               )}
             </>
           )}
+          <ScrollToTop />
         </main>
       </div>
     </div>
