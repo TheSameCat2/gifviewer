@@ -6,24 +6,20 @@ export function ScrollToTop() {
   const [visible, setVisible] = useState(false);
 
   useEffect(() => {
-    const main = document.querySelector("main");
-    if (!main) return;
-
     const toggle = () => {
-      setVisible(main.scrollTop > 200);
+      setVisible(window.scrollY > 200);
     };
 
-    main.addEventListener("scroll", toggle, { passive: true });
+    window.addEventListener("scroll", toggle, { passive: true });
     toggle();
 
-    return () => main.removeEventListener("scroll", toggle);
+    return () => window.removeEventListener("scroll", toggle);
   }, []);
 
   if (!visible) return null;
 
   const handleClick = () => {
-    const main = document.querySelector("main");
-    main?.scrollTo({ top: 0, behavior: "smooth" });
+    window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
   return (
