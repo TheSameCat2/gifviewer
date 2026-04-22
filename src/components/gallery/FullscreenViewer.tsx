@@ -252,6 +252,7 @@ export function FullscreenViewer({
     setError(null);
     try {
       await fetch(`/api/media/${item.id}`, { method: "DELETE" });
+      window.dispatchEvent(new CustomEvent("mediaDeleted", { detail: item.id }));
       router.push(backHref);
       router.refresh();
     } catch (e) {
@@ -285,6 +286,7 @@ export function FullscreenViewer({
       {/* Close button */}
       <Link
         href={backHref}
+        scroll={false}
         className="absolute left-4 top-4 z-10 rounded bg-black/50 px-3 py-2 text-sm text-white hover:bg-black/70"
       >
         ✕ Close
@@ -295,6 +297,7 @@ export function FullscreenViewer({
         {previousHref !== null && (
           <Link
             href={previousHref}
+            scroll={false}
             className="rounded bg-black/50 px-3 py-2 text-sm text-white hover:bg-black/70"
           >
             ← Previous
@@ -303,6 +306,7 @@ export function FullscreenViewer({
         {nextHref !== null && (
           <Link
             href={nextHref}
+            scroll={false}
             className="rounded bg-black/50 px-3 py-2 text-sm text-white hover:bg-black/70"
           >
             Next →

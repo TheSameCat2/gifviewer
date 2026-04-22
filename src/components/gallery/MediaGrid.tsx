@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import Link from "next/link";
 import Image from "next/image";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { MediaRow } from "@/lib/db/media";
 import { ContextMenu, ContextMenuEntry } from "./ContextMenu";
 import { blurhashToDataUrl } from "@/lib/media/blurhash";
@@ -96,6 +96,13 @@ export function MediaGrid({
   const sentinelRef = useRef<HTMLDivElement>(null);
   const hasMore = loadedPages < totalPages;
 
+  const searchParams = useSearchParams();
+  const hasMediaParam = searchParams.has("media");
+
+  // Refs for tracking folder changes and previous initial item IDs
+  const lastFolderIdRef = useRef(folderId);
+  const prevInitialIdsRef = useRef<Set<number>>(new Set());
+
   // Clipboard state
   const [clipboard, setClipboard] = useState<ClipboardState | null>(null);
 
@@ -119,13 +126,8 @@ export function MediaGrid({
       .catch(() => {});
   }, [folderId]);
 
-  // Fetch next page
-  const fetchNextPage = useCallback(async () => {
-    if (isLoading || !hasMore) return;
-
-    setIsLoading(true);
-    const nextPage = loadedPages + 1;
-
+  // Fetch a specific page (used internally for restore and infinite scroll)
+  const fetchPage = useCallback(async (page: number) => {
     try {
       let url: string;
       if (isFilterMode) {
@@ -133,10 +135,10 @@ export function MediaGrid({
         if (folderId > 0) params.set("folder", String(folderId));
         if (filterTags.length > 0) params.set("tags", filterTags.join(","));
         if (filterRating > 0) params.set("rating", String(filterRating));
-        params.set("page", String(nextPage));
+        params.set("page", String(page));
         url = `/api/search?${params.toString()}`;
       } else {
-        url = `/api/folders/${folderId}/media?page=${nextPage}`;
+        url = `/api/folders/${folderId}/media?page=${page}`;
       }
 
       const res = await fetch(url);
@@ -152,20 +154,76 @@ export function MediaGrid({
         return [...prev, ...filtered];
       });
 
-      setLoadedPages(nextPage);
+      setLoadedPages(page);
     } catch (err) {
-      console.error("Error fetching next page:", err);
+      console.error("Error fetching page:", err);
+    }
+  }, [folderId, isFilterMode, filterTags, filterRating]);
+
+  // Fetch next page (wrapper around fetchPage)
+  const fetchNextPage = useCallback(async () => {
+    if (isLoading || !hasMore) return;
+
+    setIsLoading(true);
+    const nextPage = loadedPages + 1;
+
+    try {
+      await fetchPage(nextPage);
     } finally {
       setIsLoading(false);
     }
-  }, [folderId, hasMore, isLoading, loadedPages, isFilterMode, filterTags, filterRating]);
+  }, [fetchPage, hasMore, isLoading, loadedPages]);
 
-  // Resync local state from server props when they change (e.g., navigation between folders)
+  // Resync local state from server props when they change.
+  // When staying in the same folder we merge fresh initial items rather than
+  // replacing everything, so client-loaded pages and scroll position are kept.
+  // When switching folders we do a full reset.
   useEffect(() => {
-    setItems(initialItems);
-    setLoadedPages(initialLoadedPages);
+    if (folderId !== lastFolderIdRef.current) {
+      // Full reset on folder change
+      setItems(initialItems);
+      setLoadedPages(initialLoadedPages);
+      lastFolderIdRef.current = folderId;
+    } else {
+      // Same folder: merge server-fresh page-1 items, remove deleted ones
+      setItems((prev) => {
+        const currentInitialIds = new Set(initialItems.map((i) => i.id));
+        const removedIds = new Set<number>();
+        for (const id of prevInitialIdsRef.current) {
+          if (!currentInitialIds.has(id)) {
+            removedIds.add(id);
+          }
+        }
+        const filtered = prev.filter((i) => !removedIds.has(i.id));
+        const filteredIds = new Set(filtered.map((i) => i.id));
+        const newItems = initialItems.filter((i) => !filteredIds.has(i.id));
+        return [...newItems, ...filtered];
+      });
+      // Keep loadedPages so buildHref and infinite scroll stay consistent
+    }
+
+    prevInitialIdsRef.current = new Set(initialItems.map((i) => i.id));
     setIsLoading(false);
-  }, [folderId, initialItems, initialLoadedPages]);
+
+    // Restore scroll position when returning from fullscreen (no media param)
+    if (!hasMediaParam) {
+      const saved = sessionStorage.getItem("mediaGridScroll");
+      if (saved) {
+        sessionStorage.removeItem("mediaGridScroll");
+        const { scrollY, mediaId } = JSON.parse(saved);
+        requestAnimationFrame(() => {
+          const el = document.querySelector(
+            `[data-media-id="${mediaId}"]`
+          );
+          if (el) {
+            el.scrollIntoView({ block: "start", behavior: "instant" });
+          } else {
+            window.scrollTo({ top: scrollY, behavior: "instant" });
+          }
+        });
+      }
+    }
+  }, [folderId, initialItems, initialLoadedPages, hasMediaParam]);
 
   // IntersectionObserver for infinite scroll
   useEffect(() => {
@@ -184,6 +242,19 @@ export function MediaGrid({
     observer.observe(sentinel);
     return () => observer.disconnect();
   }, [fetchNextPage, hasMore, isLoading]);
+
+  // Listen for media-deletion events from the fullscreen viewer so we can
+  // remove the item immediately instead of waiting for a server refresh.
+  useEffect(() => {
+    const handleDelete = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (typeof detail === "number") {
+        setItems((prev) => prev.filter((i) => i.id !== detail));
+      }
+    };
+    window.addEventListener("mediaDeleted", handleDelete);
+    return () => window.removeEventListener("mediaDeleted", handleDelete);
+  }, []);
 
   // --- Clipboard operations ---
 
@@ -314,6 +385,7 @@ export function MediaGrid({
           return (
             <div
               key={item.id}
+              data-media-id={item.id}
               className={`group relative flex aspect-square items-center justify-center overflow-hidden rounded-lg bg-zinc-100 dark:bg-zinc-800 ${
                 isCutSource ? "ring-2 ring-yellow-400 opacity-60" : ""
               }`}
@@ -324,6 +396,16 @@ export function MediaGrid({
             >
               <Link
                 href={href}
+                scroll={false}
+                onClick={() => {
+                  sessionStorage.setItem(
+                    "mediaGridScroll",
+                    JSON.stringify({
+                      scrollY: window.scrollY,
+                      mediaId: item.id,
+                    })
+                  );
+                }}
                 className="absolute inset-0"
               >
                 {/* Blurhash placeholder */}
