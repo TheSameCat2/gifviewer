@@ -77,7 +77,7 @@ export async function GET(
         headers: {
           "Content-Type": thumbContentType(thumbPath),
           "Content-Length": thumbStat.size.toString(),
-          "Cache-Control": "public, max-age=31536000, immutable",
+          "Cache-Control": "public, max-age=86400",
         },
       });
     }

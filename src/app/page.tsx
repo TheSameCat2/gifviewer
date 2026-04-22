@@ -158,7 +158,7 @@ export default async function GalleryPage({ searchParams }: PageProps) {
           <h1 className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50">
             {config.appName}
           </h1>
-          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-4">
             <ScanLibraryButton currentFolder={selectedFolderId?.toString()} />
             {selectedFolderId !== null && (
               <a
@@ -173,6 +173,13 @@ export default async function GalleryPage({ searchParams }: PageProps) {
                 <span>Filter</span>
               </a>
             )}
+            <Link
+              href="/settings"
+              className="flex items-center gap-2 rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700"
+            >
+              <span>⚙️</span>
+              <span>Settings</span>
+            </Link>
           </div>
         </div>
       </header>
