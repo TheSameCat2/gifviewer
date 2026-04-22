@@ -14,6 +14,25 @@ interface FolderNode {
   children: FolderNode[];
 }
 
+// --- Module-level tree cache: keyed by a hash of folder ids + names ---
+interface TreeCacheEntry {
+  roots: FolderNode[];
+  rootNode: FolderNode | null;
+  displayRoots: FolderNode[];
+}
+
+let treeCache: { key: string; entry: TreeCacheEntry } | null = null;
+
+function hashFolders(folders: import("@/lib/db/folders").FolderRow[]): string {
+  // Fast hash: length + id:name tuples — sufficient for cache invalidation
+  let h = String(folders.length);
+  for (let i = 0; i < folders.length; i++) {
+    const f = folders[i];
+    h += `|${f.id}:${f.name}:${f.parent_id ?? "null"}:${f.path}`;
+  }
+  return h;
+}
+
 function buildTree(folders: import("@/lib/db/folders").FolderRow[]): { roots: FolderNode[]; rootNode: FolderNode | null } {
   const map = new Map<number, FolderNode>();
   const roots: FolderNode[] = [];
@@ -48,6 +67,19 @@ function sortTree(nodes: FolderNode[]): FolderNode[] {
   return nodes
     .sort((a, b) => a.name.localeCompare(b.name))
     .map((n) => ({ ...n, children: sortTree(n.children) }));
+}
+
+function getCachedTree(folders: import("@/lib/db/folders").FolderRow[]): TreeCacheEntry {
+  const key = hashFolders(folders);
+  if (treeCache && treeCache.key === key) {
+    return treeCache.entry;
+  }
+  const { roots, rootNode } = buildTree(folders);
+  const sortedRoots = sortTree(roots);
+  const displayRoots = rootNode ? sortTree(rootNode.children) : sortedRoots;
+  const entry: TreeCacheEntry = { roots, rootNode, displayRoots };
+  treeCache = { key, entry };
+  return entry;
 }
 
 const FolderItem = memo(function FolderItem({ node, depth, selectedId }: { node: FolderNode; depth: number; selectedId?: number }) {
@@ -99,9 +131,7 @@ export function FolderTree({ selectedId }: FolderTreeProps) {
   const allFolders = getAllFolders();
   if (allFolders.length === 0) return null;
 
-  const { roots, rootNode } = buildTree(allFolders);
-  const sortedRoots = sortTree(roots);
-  const displayRoots = rootNode ? sortTree(rootNode.children) : sortedRoots;
+  const { rootNode, displayRoots } = getCachedTree(allFolders);
 
   // Determine if root link should be selected
   const rootSelected = selectedId === undefined || (rootNode && selectedId === rootNode.id);

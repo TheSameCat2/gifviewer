@@ -22,8 +22,8 @@ Mark items as you go; open a PR only when a section is fully complete.
 |---|-------|--------|--------|-------|
 | 1.5 | SSR hydrates the *entire* scrolled history (`finalLoadedPages * PAGE_SIZE`). If user is on page 10, 1,200 rows ship in initial HTML. | **Very High** | `done` | `page.tsx` now caps server-side items to exactly `PAGE_SIZE`; client fetches additional pages. |
 | 1.6 | Filter mode also loads `finalLoadedPages * PAGE_SIZE` rows server-side even though only the first page is visible. | **High** | `done` | Filter-mode `searchMedia` call uses `ssrLimit = PAGE_SIZE`. |
-| 1.7 | `buildTree` + `sortTree` run on every SSR pass regardless of whether the folder tree changed. | Low | `pending` | Cache tree structure or memoize if possible. |
-| 1.8 | `getAllTags()` and `getAllFolders()` are loaded unconditionally on every navigation. | Low | `pending` | Only fetch when needed (e.g., filter panel open or tree render). |
+| 1.7 | `buildTree` + `sortTree` run on every SSR pass regardless of whether the folder tree changed. | Low | `done` | Added module-level hash-keyed cache in `FolderTree.tsx`; tree is only rebuilt when folder list actually changes. |
+| 1.8 | `getAllTags()` and `getAllFolders()` are loaded unconditionally on every navigation. | Low | `done` | `getAllTags()` now only called in filter mode; `getAllFolders()` for `folderOptions` only called when fullscreen is open. |
 
 ### Thumbnail API (`/api/thumbs/[id]`)
 
@@ -49,8 +49,8 @@ Mark items as you go; open a PR only when a section is fully complete.
 
 | # | Issue | Impact | Status | Notes |
 |---|-------|--------|--------|-------|
-| 2.5 | Inline thumbnail generation blocks the scan HTTP request. `generateMediaAssets` runs inside the scan handler. | **High** | `pending` | Still runs inside scan handler. Consider moving to a background worker. |
-| 2.6 | GIF processing is CPU-bound and 4 concurrent sharp encodes can saturate cores. | Medium | `pending` | CONCURRENCY still 4 for all types. |
+| 2.5 | Inline thumbnail generation blocks the scan HTTP request. `generateMediaAssets` runs inside the scan handler. | **High** | `done` | `generateMediaAssets` now runs in a fire-and-forget promise after the scan job is marked `completed`; the HTTP response returns immediately. Job record is updated with thumbnail counts when background work finishes. |
+| 2.6 | GIF processing is CPU-bound and 4 concurrent sharp encodes can saturate cores. | Medium | `done` | `generateMediaAssets` now partitions by media type and uses `animated: 2`, `video: 4`, `image: 4` concurrency limits. |
 
 ---
 
@@ -63,14 +63,14 @@ Mark items as you go; open a PR only when a section is fully complete.
 | 3.1 | File upserts are fully sequential. `for (const relativePath of validFiles) { await upsertMedia(...) }` is one-by-one. | **High** | `done` | Replaced per-file `upsertMedia` with `batchUpsertFiles`: preload existing rows, probe in parallel batches, write in one SQLite transaction. |
 | 3.2 | No bulk insert / transaction boundary around the file loop. | Medium | `done` | Covered by `batchUpsertFiles` implementation. |
 | 3.3 | Metadata probing (`probeMedia`) is interleaved with DB writes. | Medium | `done` | `batchUpsertFiles` probes with `CONCURRENCY = 8` before the DB transaction. |
-| 3.4 | Stale removal loads entire tables into memory. `removeStaleFolders` and `removeStaleMedia` `SELECT *` then diff in JS. | Medium | `pending` | Use `DELETE ... WHERE path NOT IN (...)` or `NOT IN` subqueries and keep the work in SQL. |
+| 3.4 | Stale removal loads entire tables into memory. `removeStaleFolders` and `removeStaleMedia` `SELECT *` then diff in JS. | Medium | `done` | Rewrote both to use SQLite temp tables + single `DELETE ... NOT IN (SELECT path FROM temp_table)` — no JS diff, no full table load. |
 | 3.5 | No incremental / watch-mode scan. Every scan walks the full tree from disk. | Low | `pending` | Out of scope for a quick pass, but a long-term win. Consider `fs.watch` or a polling delta scan. |
 
 ### `walkDir`
 
 | # | Issue | Impact | Status | Notes |
-|---|-------|--------|--------|-------|
-| 3.6 | Files within a single directory are not processed in parallel. Only subdirectories recurse in parallel. | Low | `pending` | Minor compared to 3.1, but parallel file stat/probing within a dir would help flat folders. |
+|---|---|--------|--------|-------|
+| 3.6 | Files within a single directory are not processed in parallel. Only subdirectories recurse in parallel. | Low | `done` | `batchUpsertFiles` Phase 1 now stats files in parallel batches of 16 via `Promise.all`, removing serial I/O bottleneck for flat folders. |
 
 ---
 
@@ -79,8 +79,8 @@ Mark items as you go; open a PR only when a section is fully complete.
 | # | Issue | Impact | Status | Notes |
 |---|-------|--------|--------|-------|
 | 4.1 | Missing composite index on `media(folder_id, manual_order, filename, id)`. | **High** | `done` | Added `idx_media_folder_order` on `(folder_id, manual_order, filename, id)`. |
-| 4.2 | `SELECT *` fetches `thumb_blurhash` in every grid query even though it is only needed for SSR placeholders. | Low | `pending` | Select only needed columns to shrink result sets and reduce serialization cost. |
-| 4.3 | `scan_jobs` tracks `status = 'running'` but has no true worker queue. | Medium | `pending` | Still a synchronous scan in the POST handler. |
+| 4.2 | `SELECT *` fetches `thumb_blurhash` in every grid query even though it is only needed for SSR placeholders. | Low | `done` | Introduced `MediaGridItem` type with only `id, filename, mime_type, thumb_blurhash`. Added `getMediaGridItems` and `searchMediaGridItems` that select only those columns. Updated `MediaGrid`, API routes, and `page.tsx` to use slimmed queries. |
+| 4.3 | `scan_jobs` tracks `status = 'running'` but has no true worker queue. | Medium | `done` | Scan now returns immediately after DB walk + stale removal. Thumbnail generation runs in background; job record is updated with counts when it completes. |
 
 ---
 
@@ -93,4 +93,4 @@ Mark items as you go; open a PR only when a section is fully complete.
 
 ---
 
-*Last updated: after implementing all high-impact fixes (DB index, SSR pagination, React grid rendering, non-blocking thumbs, GIF WebP conversion + frame limiting, scanner batch upserts).
+*Last updated: all medium-impact fixes implemented (cached folder tree, conditional tag/folder fetching, background thumbnail generation, per-type concurrency, SQL-based stale removal, parallel stat batching, grid column selection, async scan worker).

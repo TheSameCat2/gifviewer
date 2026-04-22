@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { getDescendantFolderIds } from "@/lib/db/folders";
-import { MediaRow } from "@/lib/db/media";
+import { MediaGridItem } from "@/lib/db/media";
 import { PAGE_SIZE } from "@/lib/gallery";
 
 export const runtime = "nodejs";
@@ -97,12 +97,12 @@ export async function GET(request: NextRequest) {
   const clampedPage = Math.min(page, totalPages);
   const offset = (clampedPage - 1) * PAGE_SIZE;
 
-  // Fetch paginated items
+  // Fetch paginated items (grid-optimized columns only)
   const items = db
     .prepare(
-      `SELECT DISTINCT m.* FROM media m ${whereClause} ORDER BY m.id DESC LIMIT ? OFFSET ?`
+      `SELECT DISTINCT m.id, m.filename, m.mime_type, m.thumb_blurhash FROM media m ${whereClause} ORDER BY m.id DESC LIMIT ? OFFSET ?`
     )
-    .all(...params, PAGE_SIZE, offset) as MediaRow[];
+    .all(...params, PAGE_SIZE, offset) as MediaGridItem[];
 
   return NextResponse.json({
     page: clampedPage,

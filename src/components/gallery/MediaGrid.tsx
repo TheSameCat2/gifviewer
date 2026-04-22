@@ -4,12 +4,12 @@ import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { useRouter, useSearchParams } from "next/navigation";
-import { MediaRow } from "@/lib/db/media";
+import { MediaGridItem } from "@/lib/db/media";
 import { ContextMenu, ContextMenuEntry } from "./ContextMenu";
 import { blurhashToDataUrl } from "@/lib/media/blurhash";
 
 interface MediaGridProps {
-  initialItems: MediaRow[];
+  initialItems: MediaGridItem[];
   folderId: number;
   initialLoadedPages: number;
   totalCount: number;
@@ -26,7 +26,7 @@ function isVideoMime(mimeType: string | null): boolean {
   return mimeType === "video/webm";
 }
 
-type MediaItem = MediaRow;
+type MediaItem = MediaGridItem;
 
 interface ClipboardState {
   mediaId: number;
@@ -145,7 +145,7 @@ export function MediaGrid({
       if (!res.ok) throw new Error("Failed to fetch");
 
       const data = await res.json();
-      const newItems = data.items as MediaRow[];
+      const newItems = data.items as MediaGridItem[];
 
       setItems((prev) => {
         // Dedupe by id defensively

@@ -97,6 +97,19 @@ export function getMediaByFolderPaginated(
     .all(...params, limit, offset) as import("./media").MediaRow[];
 }
 
+/** Grid-optimized variant: selects only the columns MediaGrid actually needs. */
+export function getMediaGridItems(
+  folderId: number | null,
+  limit: number,
+  offset: number
+): import("./media").MediaGridItem[] {
+  const db = getDb();
+  const { where, params } = folderMediaWhere(folderId);
+  return db
+    .prepare(`SELECT id, filename, mime_type, thumb_blurhash FROM media WHERE ${where} ORDER BY manual_order, filename, id LIMIT ? OFFSET ?`)
+    .all(...params, limit, offset) as import("./media").MediaGridItem[];
+}
+
 /** Get the previous and next media IDs adjacent to the given mediaId within a folder.
  *  Uses direct SQL tuple comparison so it never loads all IDs into memory. */
 export function getAdjacentMediaIds(
@@ -237,14 +250,13 @@ export interface SearchMediaOptions {
 }
 
 /**
- * Search media with optional folder hierarchy scope, rating threshold, and tag filtering.
- * Uses a recursive CTE to include all descendant folders when folderId is set.
- * Returns { items, totalCount } for proper pagination support.
+ * Shared WHERE builder for search queries so grid and full variants stay in sync.
  */
-export function searchMedia(options: SearchMediaOptions = {}): { items: import("./media").MediaRow[]; totalCount: number } {
-  const db = getDb();
-  const { limit = 100, offset = 0, folderId = null, minRating = 0, tagIds } = options;
-
+function buildSearchWhere(
+  db: ReturnType<typeof getDb>,
+  options: SearchMediaOptions
+): { where: string; params: (number | string)[] } {
+  const { folderId = null, minRating = 0, tagIds } = options;
   const conditions: string[] = [];
   const params: (number | string)[] = [];
 
@@ -277,6 +289,18 @@ export function searchMedia(options: SearchMediaOptions = {}): { items: import("
   }
 
   const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+  return { where, params };
+}
+
+/**
+ * Search media with optional folder hierarchy scope, rating threshold, and tag filtering.
+ * Uses a recursive CTE to include all descendant folders when folderId is set.
+ * Returns { items, totalCount } for proper pagination support.
+ */
+export function searchMedia(options: SearchMediaOptions = {}): { items: import("./media").MediaRow[]; totalCount: number } {
+  const db = getDb();
+  const { limit = 100, offset = 0 } = options;
+  const { where, params } = buildSearchWhere(db, options);
 
   // Count total matching media
   const countRow = db
@@ -290,6 +314,28 @@ export function searchMedia(options: SearchMediaOptions = {}): { items: import("
       `SELECT DISTINCT m.* FROM media m ${where} ORDER BY m.id DESC LIMIT ? OFFSET ?`
     )
     .all(...params, limit, offset) as import("./media").MediaRow[];
+
+  return { items, totalCount };
+}
+
+/**
+ * Grid-optimized search: selects only the columns MediaGrid needs.
+ */
+export function searchMediaGridItems(options: SearchMediaOptions = {}): { items: import("./media").MediaGridItem[]; totalCount: number } {
+  const db = getDb();
+  const { limit = 100, offset = 0 } = options;
+  const { where, params } = buildSearchWhere(db, options);
+
+  const countRow = db
+    .prepare(`SELECT COUNT(DISTINCT m.id) as count FROM media m ${where}`)
+    .get(...params) as { count: number };
+  const totalCount = countRow.count;
+
+  const items = db
+    .prepare(
+      `SELECT DISTINCT m.id, m.filename, m.mime_type, m.thumb_blurhash FROM media m ${where} ORDER BY m.id DESC LIMIT ? OFFSET ?`
+    )
+    .all(...params, limit, offset) as import("./media").MediaGridItem[];
 
   return { items, totalCount };
 }

@@ -69,27 +69,31 @@ function upsertFolder(
 }
 
 /**
- * Deletes folders that no longer exist on disk (except root) using batch operations.
+ * Deletes folders that no longer exist on disk (except root) using a temp table
+ * and a single SQL DELETE — avoids loading the entire table into memory.
  */
 function removeStaleFolders(db: ReturnType<typeof getDb>, validPaths: Set<string>): number {
-  const allFolders = db
-    .prepare("SELECT id, path FROM folders")
-    .all() as { id: number; path: string }[];
+  if (validPaths.size === 0) {
+    const result = db.prepare("DELETE FROM folders WHERE path != ''").run();
+    return result.changes;
+  }
 
-  const staleIds = allFolders
-    .filter((f) => f.path !== "" && !validPaths.has(f.path))
-    .map((f) => f.id);
+  db.prepare("CREATE TEMP TABLE IF NOT EXISTS _valid_folder_paths (path TEXT PRIMARY KEY)").run();
+  db.prepare("DELETE FROM _valid_folder_paths").run();
 
-  if (staleIds.length === 0) return 0;
-
-  // Batch delete in a single transaction
-  const placeholders = staleIds.map(() => "?").join(",");
-  const transaction = db.transaction(() => {
-    db.prepare(`DELETE FROM folders WHERE id IN (${placeholders})`).run(...staleIds);
+  const insert = db.prepare("INSERT OR IGNORE INTO _valid_folder_paths (path) VALUES (?)");
+  const tx = db.transaction(() => {
+    for (const p of validPaths) {
+      insert.run(p);
+    }
   });
-  transaction();
+  tx();
 
-  return staleIds.length;
+  const result = db.prepare(
+    `DELETE FROM folders WHERE path != '' AND path NOT IN (SELECT path FROM _valid_folder_paths)`
+  ).run();
+
+  return result.changes;
 }
 
 /**
@@ -220,40 +224,56 @@ async function batchUpsertFiles(
   }[] = [];
   let skipped = 0;
 
-  for (const item of items) {
-    const ext = getExtension(item.absolutePath);
-    if (!isSupported(ext)) {
-      skipped++;
-      continue;
-    }
-    const mediaType = classifyMediaType(ext);
-    if (!mediaType) {
-      skipped++;
-      continue;
-    }
+  // Phase 1b – stat/classify files in parallel batches (within a directory
+  // there may be hundreds of entries; parallel stat avoids serial I/O)
+  const STAT_CONCURRENCY = 16;
+  for (let i = 0; i < items.length; i += STAT_CONCURRENCY) {
+    const batch = items.slice(i, i + STAT_CONCURRENCY);
+    const results = await Promise.all(
+      batch.map(async (item) => {
+        const ext = getExtension(item.absolutePath);
+        if (!isSupported(ext)) return { ok: false as const };
+        const mediaType = classifyMediaType(ext);
+        if (!mediaType) return { ok: false as const };
 
-    const fileStats = await getFileStats(item.absolutePath);
-    if (!fileStats) {
-      skipped++;
-      continue;
+        const fileStats = await getFileStats(item.absolutePath);
+        if (!fileStats) return { ok: false as const };
+
+        const mtimeStr = fileStats.mtime.toISOString();
+        const existing = existingMap.get(item.relativePath);
+
+        if (existing && existing.fs_mtime === mtimeStr && existing.file_size === fileStats.size) {
+          return { ok: false as const };
+        }
+
+        return {
+          ok: true as const,
+          item,
+          mediaType,
+          existingId: existing?.id,
+          size: fileStats.size,
+          mtimeStr,
+          isNew: !existing,
+        };
+      })
+    );
+
+    for (const r of results) {
+      if (r.ok) {
+        toProbe.push({
+          relativePath: r.item.relativePath,
+          absolutePath: r.item.absolutePath,
+          folderId: r.item.folderId,
+          mediaType: r.mediaType,
+          existingId: r.existingId,
+          size: r.size,
+          mtimeStr: r.mtimeStr,
+          isNew: r.isNew,
+        });
+      } else {
+        skipped++;
+      }
     }
-
-    const mtimeStr = fileStats.mtime.toISOString();
-    const existing = existingMap.get(item.relativePath);
-
-    if (existing && existing.fs_mtime === mtimeStr && existing.file_size === fileStats.size) {
-      skipped++;
-      continue;
-    }
-
-    toProbe.push({
-      ...item,
-      mediaType,
-      existingId: existing?.id,
-      size: fileStats.size,
-      mtimeStr,
-      isNew: !existing,
-    });
   }
 
   // Phase 2 – probe metadata in parallel batches
@@ -338,7 +358,10 @@ async function batchUpsertFiles(
 
 /**
  * Batch generates thumbnails and blurhashes for a list of media items.
- * Uses concurrency limiting to avoid overwhelming the system.
+ * Uses per-media-type concurrency limits:
+ *   - animated (GIF): 2  (CPU-bound sharp decoding)
+ *   - video: 4           (ffmpeg is mostly I/O bound)
+ *   - image: 4           (static sharp, less intensive than animated)
  */
 async function generateMediaAssets(
   items: { mediaId: number; relativePath: string; mediaType: string }[],
@@ -349,70 +372,95 @@ async function generateMediaAssets(
     fs.mkdirSync(thumbRoot, { recursive: true });
   }
 
-  const CONCURRENCY = 4; // Process 4 items at a time
+  // Partition by media type so we can apply different concurrency limits
+  const byType: Record<string, typeof items> = {
+    animated: [],
+    video: [],
+    image: [],
+  };
+  for (const item of items) {
+    (byType[item.mediaType] ?? byType.image).push(item);
+  }
+
+  const limits: Record<string, number> = {
+    animated: 2,
+    video: 4,
+    image: 4,
+  };
+
   let thumbnailsGenerated = 0;
   let blurhashesGenerated = 0;
   let processed = 0;
 
-  for (let i = 0; i < items.length; i += CONCURRENCY) {
-    const batch = items.slice(i, i + CONCURRENCY);
-    
-    await Promise.all(
-      batch.map(async (item) => {
-        try {
-          // Generate both small and large thumbnails
-          const smallThumb = await generateThumbnail(item.mediaId, item.relativePath, item.mediaType, "small");
-          const largeThumb = await generateThumbnail(item.mediaId, item.relativePath, item.mediaType, "large");
-          
-          if (smallThumb || largeThumb) {
-            thumbnailsGenerated++;
+  // Process each partition with its own concurrency
+  for (const [mediaType, typeItems] of Object.entries(byType)) {
+    if (typeItems.length === 0) continue;
+    const concurrency = limits[mediaType] ?? 4;
+
+    for (let i = 0; i < typeItems.length; i += concurrency) {
+      const batch = typeItems.slice(i, i + concurrency);
+
+      await Promise.all(
+        batch.map(async (item) => {
+          try {
+            // Generate both small and large thumbnails
+            const smallThumb = await generateThumbnail(item.mediaId, item.relativePath, item.mediaType, "small");
+            const largeThumb = await generateThumbnail(item.mediaId, item.relativePath, item.mediaType, "large");
+
+            if (smallThumb || largeThumb) {
+              thumbnailsGenerated++;
+            }
+
+            // Generate blurhash and store in DB
+            const blurhash = await generateBlurhashForMedia(item.relativePath, item.mediaType);
+            if (blurhash) {
+              const db = getDb();
+              db.prepare("UPDATE media SET thumb_blurhash = ? WHERE id = ?").run(blurhash, item.mediaId);
+              blurhashesGenerated++;
+            }
+          } catch (err) {
+            console.warn(`Failed to generate assets for media ${item.mediaId}:`, err);
           }
 
-          // Generate blurhash and store in DB
-          const blurhash = await generateBlurhashForMedia(item.relativePath, item.mediaType);
-          if (blurhash) {
-            const db = getDb();
-            db.prepare("UPDATE media SET thumb_blurhash = ? WHERE id = ?").run(blurhash, item.mediaId);
-            blurhashesGenerated++;
-          }
-        } catch (err) {
-          console.warn(`Failed to generate assets for media ${item.mediaId}:`, err);
-        }
-        
-        processed++;
-        onProgress?.(processed, items.length);
-      })
-    );
+          processed++;
+          onProgress?.(processed, items.length);
+        })
+      );
+    }
   }
 
   return { thumbnails: thumbnailsGenerated, blurhashes: blurhashesGenerated };
 }
 
 /**
- * Removes media entries for files that no longer exist using batch operations.
+ * Removes media entries for files that no longer exist using a temp table
+ * and a single SQL DELETE — avoids loading the entire table into memory.
  */
 function removeStaleMedia(
   db: ReturnType<typeof getDb>,
   validPaths: Set<string>
 ): number {
-  const allMedia = db
-    .prepare("SELECT id, relative_path FROM media")
-    .all() as { id: number; relative_path: string }[];
+  if (validPaths.size === 0) {
+    const result = db.prepare("DELETE FROM media").run();
+    return result.changes;
+  }
 
-  const staleIds = allMedia
-    .filter((m) => !validPaths.has(m.relative_path))
-    .map((m) => m.id);
+  db.prepare("CREATE TEMP TABLE IF NOT EXISTS _valid_media_paths (path TEXT PRIMARY KEY)").run();
+  db.prepare("DELETE FROM _valid_media_paths").run();
 
-  if (staleIds.length === 0) return 0;
-
-  // Batch delete in a single transaction
-  const placeholders = staleIds.map(() => "?").join(",");
-  const transaction = db.transaction(() => {
-    db.prepare(`DELETE FROM media WHERE id IN (${placeholders})`).run(...staleIds);
+  const insert = db.prepare("INSERT OR IGNORE INTO _valid_media_paths (path) VALUES (?)");
+  const tx = db.transaction(() => {
+    for (const p of validPaths) {
+      insert.run(p);
+    }
   });
-  transaction();
+  tx();
 
-  return staleIds.length;
+  const result = db.prepare(
+    `DELETE FROM media WHERE relative_path NOT IN (SELECT path FROM _valid_media_paths)`
+  ).run();
+
+  return result.changes;
 }
 
 /**
@@ -582,34 +630,52 @@ export async function runFullScan(): Promise<ScanResult> {
     summary.filesAdded = batchResult.added;
     summary.filesUpdated = batchResult.updated;
 
-    // Batch generate thumbnails and blurhashes
-    if (batchResult.needsThumbnailGeneration.length > 0) {
-      const { thumbnails, blurhashes } = await generateMediaAssets(batchResult.needsThumbnailGeneration);
-      summary.thumbnailsGenerated = thumbnails;
-      summary.blurhashesGenerated = blurhashes;
-    }
-
-    // Remove stale entries
+    // Remove stale entries before marking scan complete
     summary.foldersRemoved = removeStaleFolders(db, validFolders);
     summary.filesRemoved = removeStaleMedia(db, validFiles);
 
-    // Mark scan complete
+    // Mark scan DB-phase complete and return immediately — thumbnail generation
+    // is CPU/I/O heavy and runs in the background so the HTTP response isn't blocked.
     db.prepare(
-      `UPDATE scan_jobs SET 
-        status = 'completed', 
+      `UPDATE scan_jobs SET
+        status = 'completed',
         completed_at = datetime('now'),
         files_found = ?, files_added = ?, files_updated = ?, files_removed = ?,
-        thumbnails_generated = ?, blurhashes_generated = ?
+        thumbnails_generated = 0,
+        blurhashes_generated = 0
       WHERE id = ?`
     ).run(
       summary.filesFound,
       summary.filesAdded,
       summary.filesUpdated,
       summary.filesRemoved,
-      summary.thumbnailsGenerated,
-      summary.blurhashesGenerated,
       scanJobId
     );
+
+    // Background asset generation: fire-and-forget so the scan HTTP handler
+    // returns promptly. The job record is updated when thumbs finish.
+    if (batchResult.needsThumbnailGeneration.length > 0) {
+      const assetItems = batchResult.needsThumbnailGeneration;
+      // Intentionally not awaited — runs after the scan response is sent
+      generateMediaAssets(assetItems)
+        .then(({ thumbnails, blurhashes }) => {
+          db.prepare(
+            `UPDATE scan_jobs SET
+              thumbnails_generated = ?,
+              blurhashes_generated = ?
+            WHERE id = ?`
+          ).run(thumbnails, blurhashes, scanJobId);
+        })
+        .catch((err) => {
+          console.error("Background thumbnail generation failed:", err);
+          db.prepare(
+            `UPDATE scan_jobs SET error_message = ? WHERE id = ?`
+          ).run(
+            `Thumbnail generation failed: ${err instanceof Error ? err.message : String(err)}`,
+            scanJobId
+          );
+        });
+    }
 
     return { success: true, summary };
   } catch (error) {

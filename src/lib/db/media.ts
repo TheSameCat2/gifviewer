@@ -26,6 +26,17 @@ export interface MediaRow {
   updated_at: string;
 }
 
+/**
+ * Slimmer row shape for grid queries — only the columns the MediaGrid
+ * component actually needs, reducing serialization cost.
+ */
+export interface MediaGridItem {
+  id: number;
+  filename: string;
+  mime_type: string | null;
+  thumb_blurhash: string | null;
+}
+
 export function getMediaById(id: number): MediaRow | null {
   const db = getDb();
   const row = db

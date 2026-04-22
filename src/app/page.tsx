@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { getConfig } from "@/lib/config";
-import { getRootFolder, getFolderById, getFolderChildren, getMediaByFolderPaginated, getMediaCountByFolder, getAdjacentMediaIds, getMediaPageForFolderItem, getFolderBreadcrumbs, hasFolders, getAllFolders, searchMedia } from "@/lib/db/folders";
+import { getRootFolder, getFolderById, getFolderChildren, getMediaByFolderPaginated, getMediaGridItems, getMediaCountByFolder, getAdjacentMediaIds, getMediaPageForFolderItem, getFolderBreadcrumbs, hasFolders, getAllFolders, searchMediaGridItems } from "@/lib/db/folders";
 import { getMediaById, getTagsForMedia } from "@/lib/db/media";
 import { getAllTags } from "@/lib/db/media";
 import { FolderTree } from "@/components/gallery/FolderTree";
@@ -81,9 +81,9 @@ export default async function GalleryPage({ searchParams }: PageProps) {
   // Hydrate only the first page server-side; client infinite-scroll fetches the rest
   const ssrLimit = PAGE_SIZE;
 
-  // Fetch initial media list: exactly one page
+  // Fetch initial media list: exactly one page (grid-optimized columns only)
   const initialMediaItems = selectedFolder
-    ? getMediaByFolderPaginated(selectedFolder.id, ssrLimit, 0)
+    ? getMediaGridItems(selectedFolder.id, ssrLimit, 0)
     : [];
 
   const breadcrumbs = selectedFolderId ? getFolderBreadcrumbs(selectedFolderId) : [];
@@ -115,12 +115,14 @@ export default async function GalleryPage({ searchParams }: PageProps) {
 
   const libraryExists = hasFolders();
 
-  // Build folder options for move controls
-  const folderOptions = getAllFolders().map((f) => ({
-    id: f.id,
-    name: f.name || "/",
-    path: f.path,
-  }));
+  // Build folder options for move controls (only needed when fullscreen is open)
+  const folderOptions = selectedMedia
+    ? getAllFolders().map((f) => ({
+        id: f.id,
+        name: f.name || "/",
+        path: f.path,
+      }))
+    : [];
 
   // Parse filter state from search params
   const isFilterMode = filterParam === "1";
@@ -129,14 +131,14 @@ export default async function GalleryPage({ searchParams }: PageProps) {
     : [];
   const activeRating = ratingParam ? Math.max(0, Math.min(5, parseInt(ratingParam, 10) || 0)) : 0;
 
-  // Get all available tags
-  const allTags = getAllTags();
+  // Get all available tags (only needed in filter mode)
+  const allTags = isFilterMode ? getAllTags() : [];
 
-  // Filter-mode data: hydrate only one page server-side
-  let filterInitialItems: import("@/lib/db/media").MediaRow[] = [];
+  // Filter-mode data: hydrate only one page server-side (grid-optimized columns only)
+  let filterInitialItems: import("@/lib/db/media").MediaGridItem[] = [];
   let filterTotalCount = 0;
   if (isFilterMode && (activeTags.length > 0 || activeRating > 0)) {
-    const raw = searchMedia({
+    const raw = searchMediaGridItems({
       folderId: selectedFolderId,
       minRating: activeRating,
       tagIds: activeTags,

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getFolderById, getMediaCountByFolder, getMediaByFolderPaginated } from "@/lib/db/folders";
-import { MediaRow } from "@/lib/db/media";
+import { getFolderById, getMediaCountByFolder, getMediaGridItems } from "@/lib/db/folders";
+import { MediaGridItem } from "@/lib/db/media";
 import { PAGE_SIZE } from "@/lib/gallery";
 
 export const runtime = "nodejs";
@@ -39,7 +39,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
   const clampedPage = Math.min(page, totalPages);
   const offset = (clampedPage - 1) * PAGE_SIZE;
 
-  const items = getMediaByFolderPaginated(folderId, PAGE_SIZE, offset) as MediaRow[];
+  const items = getMediaGridItems(folderId, PAGE_SIZE, offset) as MediaGridItem[];
 
   return NextResponse.json({
     page: clampedPage,
