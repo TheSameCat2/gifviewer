@@ -88,9 +88,15 @@ export function FullscreenViewer({
     }
   }, [pending]);
 
-  // Keyboard navigation: left/right arrows to navigate between media items
+  // Keyboard navigation: left/right arrows to navigate between media items,
+  // Escape to close the fullscreen view.
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        router.push(backHref, { scroll: false });
+        return;
+      }
       if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       const target = e.target as HTMLElement;
@@ -104,7 +110,7 @@ export function FullscreenViewer({
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [previousHref, nextHref, router]);
+  }, [backHref, previousHref, nextHref, router]);
 
   const currentFolderName = folderOptions.find((f) => f.id === item.folder_id)?.name ?? "/";
 
