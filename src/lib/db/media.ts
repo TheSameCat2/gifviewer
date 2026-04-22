@@ -285,15 +285,24 @@ export function deleteMedia(mediaId: number): MediaRow | null {
     // File may already be gone; proceed with DB deletion
   }
 
-  // Also delete thumbnail
+  // Also delete thumbnails (large and small, current and legacy extensions)
   const { thumbRoot } = getConfig();
-  const thumbPath = path.join(thumbRoot, `${mediaId}.jpg`);
-  try {
-    if (existsSync(thumbPath)) {
-      unlinkSync(thumbPath);
+  const thumbNames = [
+    `thumb_${mediaId}.webp`,
+    `thumb_${mediaId}_sm.webp`,
+    `thumb_${mediaId}.gif`,
+    `thumb_${mediaId}_sm.gif`,
+    `${mediaId}.jpg`,
+  ];
+  for (const name of thumbNames) {
+    const thumbPath = path.join(thumbRoot, name);
+    try {
+      if (existsSync(thumbPath)) {
+        unlinkSync(thumbPath);
+      }
+    } catch {
+      // Thumbnail may not exist; that's fine
     }
-  } catch {
-    // Thumbnail may not exist; that's fine
   }
 
   db.prepare("DELETE FROM media WHERE id = ?").run(mediaId);

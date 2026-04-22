@@ -6,7 +6,7 @@ import fs from "fs";
 import path from "path";
 import { getDb } from "../db";
 import { getConfig } from "../config";
-import { probeMedia, getFileStats } from "./probe";
+import { probeMedia, getFileStats, MediaMetadata } from "./probe";
 import {
   isSupported,
   getExtension,
@@ -174,6 +174,166 @@ async function upsertMedia(
     mtimeStr
   );
   return { status: "added", mediaId: result.lastInsertRowid as number, mediaType, relativePath };
+}
+
+interface BatchUpsertItem {
+  relativePath: string;
+  absolutePath: string;
+  folderId: number | null;
+}
+
+interface BatchUpsertResult {
+  added: number;
+  updated: number;
+  skipped: number;
+  needsThumbnailGeneration: { mediaId: number; relativePath: string; mediaType: string }[];
+}
+
+/**
+ * Batch-upserts media files into the database.
+ *
+ * Phase 1 – Classify: preload existing DB rows, stat each file, and decide
+ *   whether to skip, update, or insert without any async I/O beyond stat.
+ * Phase 2 – Probe: run sharp/ffprobe in parallel batches for changed/new files.
+ * Phase 3 – Write: execute all INSERTs/UPDATEs in a single SQLite transaction.
+ */
+async function batchUpsertFiles(
+  db: ReturnType<typeof getDb>,
+  items: BatchUpsertItem[],
+  onProgress?: (done: number, total: number) => void
+): Promise<BatchUpsertResult> {
+  // Phase 1 – preload existing rows into memory
+  const existingRows = db
+    .prepare("SELECT id, relative_path, fs_mtime, file_size FROM media")
+    .all() as { id: number; relative_path: string; fs_mtime: string; file_size: number }[];
+  const existingMap = new Map(existingRows.map((r) => [r.relative_path, r]));
+
+  const toProbe: {
+    relativePath: string;
+    absolutePath: string;
+    folderId: number | null;
+    mediaType: string;
+    existingId?: number;
+    size: number;
+    mtimeStr: string;
+    isNew: boolean;
+  }[] = [];
+  let skipped = 0;
+
+  for (const item of items) {
+    const ext = getExtension(item.absolutePath);
+    if (!isSupported(ext)) {
+      skipped++;
+      continue;
+    }
+    const mediaType = classifyMediaType(ext);
+    if (!mediaType) {
+      skipped++;
+      continue;
+    }
+
+    const fileStats = await getFileStats(item.absolutePath);
+    if (!fileStats) {
+      skipped++;
+      continue;
+    }
+
+    const mtimeStr = fileStats.mtime.toISOString();
+    const existing = existingMap.get(item.relativePath);
+
+    if (existing && existing.fs_mtime === mtimeStr && existing.file_size === fileStats.size) {
+      skipped++;
+      continue;
+    }
+
+    toProbe.push({
+      ...item,
+      mediaType,
+      existingId: existing?.id,
+      size: fileStats.size,
+      mtimeStr,
+      isNew: !existing,
+    });
+  }
+
+  // Phase 2 – probe metadata in parallel batches
+  const CONCURRENCY = 8;
+  const probed: (typeof toProbe[0] & { metadata: MediaMetadata | null })[] = [];
+
+  for (let i = 0; i < toProbe.length; i += CONCURRENCY) {
+    const batch = toProbe.slice(i, i + CONCURRENCY);
+    const results = await Promise.all(
+      batch.map(async (item) => {
+        const metadata = await probeMedia(item.absolutePath);
+        return { ...item, metadata };
+      })
+    );
+    probed.push(...results);
+    onProgress?.(Math.min(i + CONCURRENCY, toProbe.length), toProbe.length);
+  }
+
+  // Phase 3 – batch write in a single synchronous transaction
+  const insertStmt = db.prepare(
+    `INSERT INTO media
+      (folder_id, relative_path, filename, mime_type, media_type,
+       file_size, width, height, duration_secs, fs_mtime)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  );
+
+  const updateStmt = db.prepare(
+    `UPDATE media SET
+      folder_id = ?, filename = ?, mime_type = ?, media_type = ?,
+      file_size = ?, width = ?, height = ?, duration_secs = ?,
+      fs_mtime = ?, updated_at = datetime('now')
+    WHERE id = ?`
+  );
+
+  const transaction = db.transaction(() => {
+    for (const item of probed) {
+      if (item.existingId) {
+        updateStmt.run(
+          item.folderId,
+          path.basename(item.relativePath),
+          item.metadata?.mimeType ?? getMimeType(getExtension(item.absolutePath)),
+          item.mediaType,
+          item.size,
+          item.metadata?.width ?? null,
+          item.metadata?.height ?? null,
+          item.metadata?.duration_secs ?? null,
+          item.mtimeStr,
+          item.existingId
+        );
+      } else {
+        const result = insertStmt.run(
+          item.folderId,
+          item.relativePath,
+          path.basename(item.relativePath),
+          item.metadata?.mimeType ?? getMimeType(getExtension(item.absolutePath)),
+          item.mediaType,
+          item.size,
+          item.metadata?.width ?? null,
+          item.metadata?.height ?? null,
+          item.metadata?.duration_secs ?? null,
+          item.mtimeStr
+        );
+        item.existingId = result.lastInsertRowid as number;
+      }
+    }
+  });
+  transaction();
+
+  const needsThumbnailGeneration = probed.map((item) => ({
+    mediaId: item.existingId!,
+    relativePath: item.relativePath,
+    mediaType: item.mediaType,
+  }));
+
+  return {
+    added: probed.filter((p) => p.isNew).length,
+    updated: probed.filter((p) => !p.isNew).length,
+    skipped,
+    needsThumbnailGeneration,
+  };
 }
 
 /**
@@ -360,9 +520,6 @@ export async function runFullScan(): Promise<ScanResult> {
     blurhashesGenerated: 0,
   };
 
-  // Collect items that need thumbnail generation
-  const needsThumbnailGeneration: { mediaId: number; relativePath: string; mediaType: string }[] = [];
-
   // In local-default mode (non-Docker, non-production), ensure mediaRoot exists
   // to avoid preflight failures in fresh local development environments
   const useLocalDefaults = !isDockerBuild() && process.env.NODE_ENV !== "production";
@@ -410,31 +567,24 @@ export async function runFullScan(): Promise<ScanResult> {
       if (inserted) summary.foldersAdded++;
     }
 
-    // Process media files
+    // Batch upsert all media files
+    const batchItems: BatchUpsertItem[] = [];
     for (const relativePath of validFiles) {
       const absolutePath = path.join(mediaRoot, relativePath);
-      // Normalize path.dirname result: "." for root files becomes ""
       const folderPath = path.dirname(relativePath) === "." ? "" : (path.dirname(relativePath) || "");
       const folderId = folderIdMap.get(folderPath) ?? null;
-
-      summary.filesFound++;
-      const result = await upsertMedia(db, folderId, absolutePath, relativePath);
-      if (result.status === "added") summary.filesAdded++;
-      else if (result.status === "updated") summary.filesUpdated++;
-      
-      // Collect items that need thumbnail generation
-      if ((result.status === "added" || result.status === "updated") && result.mediaId && result.mediaType && result.relativePath) {
-        needsThumbnailGeneration.push({
-          mediaId: result.mediaId,
-          relativePath: result.relativePath,
-          mediaType: result.mediaType,
-        });
-      }
+      batchItems.push({ relativePath, absolutePath, folderId });
     }
 
+    summary.filesFound = batchItems.length;
+
+    const batchResult = await batchUpsertFiles(db, batchItems);
+    summary.filesAdded = batchResult.added;
+    summary.filesUpdated = batchResult.updated;
+
     // Batch generate thumbnails and blurhashes
-    if (needsThumbnailGeneration.length > 0) {
-      const { thumbnails, blurhashes } = await generateMediaAssets(needsThumbnailGeneration);
+    if (batchResult.needsThumbnailGeneration.length > 0) {
+      const { thumbnails, blurhashes } = await generateMediaAssets(batchResult.needsThumbnailGeneration);
       summary.thumbnailsGenerated = thumbnails;
       summary.blurhashesGenerated = blurhashes;
     }

@@ -81,6 +81,7 @@ function initializeSchema(database: Database.Database): void {
     );
 
     CREATE INDEX IF NOT EXISTS idx_media_folder ON media(folder_id);
+    CREATE INDEX IF NOT EXISTS idx_media_folder_order ON media(folder_id, manual_order, filename, id);
     CREATE INDEX IF NOT EXISTS idx_media_mime ON media(mime_type);
     CREATE INDEX IF NOT EXISTS idx_media_type ON media(media_type);
     CREATE INDEX IF NOT EXISTS idx_media_rating ON media(rating);

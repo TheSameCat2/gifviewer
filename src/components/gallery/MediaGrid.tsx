@@ -96,10 +96,6 @@ export function MediaGrid({
   const sentinelRef = useRef<HTMLDivElement>(null);
   const hasMore = loadedPages < totalPages;
 
-  // Track loaded thumbnails for preload
-  const [loadedThumbs, setLoadedThumbs] = useState<Set<number>>(new Set());
-  const itemRefs = useRef<Map<number, HTMLDivElement>>(new Map());
-
   // Clipboard state
   const [clipboard, setClipboard] = useState<ClipboardState | null>(null);
 
@@ -122,49 +118,6 @@ export function MediaGrid({
       })
       .catch(() => {});
   }, [folderId]);
-
-  // Preload thumbnails for items about to enter viewport
-  useEffect(() => {
-    const observer = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((entry) => {
-          const id = Number(entry.target.getAttribute("data-media-id"));
-          if (entry.isIntersecting && !loadedThumbs.has(id)) {
-            // Preload the thumbnail
-            const img = new window.Image();
-            img.src = `/api/thumbs/${id}?size=small`;
-            img.onload = () => {
-              setLoadedThumbs((prev) => new Set(prev).add(id));
-            };
-            // Mark as loaded even if it fails (to avoid retrying)
-            img.onerror = () => {
-              setLoadedThumbs((prev) => new Set(prev).add(id));
-            };
-          }
-        });
-      },
-      { rootMargin: "200px" }
-    );
-
-    // Observe all item refs
-    itemRefs.current.forEach((element) => {
-      observer.observe(element);
-    });
-
-    return () => observer.disconnect();
-  }, [items, loadedThumbs]);
-
-  // Update URL when loaded pages change
-  const updateUrl = useCallback(
-    (page: number) => {
-      const url = new URL(window.location.href);
-      url.searchParams.set("folder", String(folderId));
-      url.searchParams.set("page", String(page));
-      // Preserve media param if present but don't change it
-      window.history.replaceState(null, "", url.toString());
-    },
-    [folderId]
-  );
 
   // Fetch next page
   const fetchNextPage = useCallback(async () => {
@@ -200,20 +153,18 @@ export function MediaGrid({
       });
 
       setLoadedPages(nextPage);
-      updateUrl(nextPage);
     } catch (err) {
       console.error("Error fetching next page:", err);
     } finally {
       setIsLoading(false);
     }
-  }, [folderId, hasMore, isLoading, loadedPages, updateUrl, isFilterMode, filterTags, filterRating]);
+  }, [folderId, hasMore, isLoading, loadedPages, isFilterMode, filterTags, filterRating]);
 
   // Resync local state from server props when they change (e.g., navigation between folders)
   useEffect(() => {
     setItems(initialItems);
     setLoadedPages(initialLoadedPages);
     setIsLoading(false);
-    setLoadedThumbs(new Set());
   }, [folderId, initialItems, initialLoadedPages]);
 
   // IntersectionObserver for infinite scroll
@@ -358,18 +309,11 @@ export function MediaGrid({
           const isVideo = isVideoMime(item.mime_type);
           const href = buildHref(item.id);
           const thumbSrc = `/api/thumbs/${item.id}?size=small`;
-          const mediaSrc = `/api/media/${item.id}`;
           const isCutSource = clipboard?.operation === "cut" && clipboard?.mediaId === item.id;
-          const isThumbLoaded = loadedThumbs.has(item.id);
 
           return (
             <div
               key={item.id}
-              ref={(el) => {
-                if (el) itemRefs.current.set(item.id, el);
-                else itemRefs.current.delete(item.id);
-              }}
-              data-media-id={item.id}
               className={`group relative flex aspect-square items-center justify-center overflow-hidden rounded-lg bg-zinc-100 dark:bg-zinc-800 ${
                 isCutSource ? "ring-2 ring-yellow-400 opacity-60" : ""
               }`}
@@ -382,39 +326,24 @@ export function MediaGrid({
                 href={href}
                 className="absolute inset-0"
               >
-                {isVideo ? (
-                  <>
-                    {/* Blurhash placeholder for video */}
-                    {item.thumb_blurhash && (
-                      <BlurhashPlaceholder hash={item.thumb_blurhash} />
-                    )}
-                    {/* Use thumbnail for grid, full video on click */}
-                    <Image
-                      src={thumbSrc}
-                      alt={item.filename}
-                      fill
-                      unoptimized
-                      sizes="(min-width: 1280px) 16vw, (min-width: 1024px) 20vw, (min-width: 768px) 25vw, 50vw"
-                      className={`object-cover transition-opacity ${isThumbLoaded ? "opacity-100" : "opacity-0"}`}
-                    />
-                  </>
-                ) : (
-                  <>
-                    {/* Blurhash placeholder for images */}
-                    {item.thumb_blurhash && (
-                      <BlurhashPlaceholder hash={item.thumb_blurhash} />
-                    )}
-                    <Image
-                      src={thumbSrc}
-                      alt={item.filename}
-                      fill
-                      unoptimized
-                      sizes="(min-width: 1280px) 16vw, (min-width: 1024px) 20vw, (min-width: 768px) 25vw, 50vw"
-                      className={`object-cover transition-opacity ${isThumbLoaded ? "opacity-100" : "opacity-0"}`}
-                      onLoad={() => setLoadedThumbs((prev) => new Set(prev).add(item.id))}
-                    />
-                  </>
+                {/* Blurhash placeholder */}
+                {item.thumb_blurhash && (
+                  <BlurhashPlaceholder hash={item.thumb_blurhash} />
                 )}
+                {/* Thumbnail image with zero-React-render load transition */}
+                <Image
+                  src={thumbSrc}
+                  alt={item.filename}
+                  fill
+                  unoptimized
+                  sizes="(min-width: 1280px) 16vw, (min-width: 1024px) 20vw, (min-width: 768px) 25vw, 50vw"
+                  className="object-cover transition-opacity opacity-0"
+                  onLoad={(e) => {
+                    const el = e.currentTarget as HTMLElement;
+                    el.classList.remove("opacity-0");
+                    el.classList.add("opacity-100");
+                  }}
+                />
                 {/* Overlay with filename */}
                 <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/60 to-transparent px-2 py-2 opacity-0 transition-opacity group-hover:opacity-100">
                   <p className="truncate text-xs text-white">{item.filename}</p>

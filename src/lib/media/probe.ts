@@ -25,7 +25,11 @@ async function probeImage(filePath: string): Promise<MediaMetadata> {
   const ext = getExtension(filePath);
   const mediaType = classifyMediaType(ext)!;
   try {
-    const metadata = await sharp(filePath).metadata();
+    // For GIFs, only parse the first frame metadata to avoid expensive full scan
+    const pipeline = mediaType === "animated"
+      ? sharp(filePath, { animated: true, pages: 1 })
+      : sharp(filePath);
+    const metadata = await pipeline.metadata();
     return {
       width: metadata.width ?? null,
       height: metadata.height ?? null,

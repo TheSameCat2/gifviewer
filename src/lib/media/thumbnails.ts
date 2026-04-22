@@ -48,8 +48,8 @@ function recordThumbFailure(mediaId: number): void {
  */
 export function getThumbCachePath(mediaId: number, mediaType: string, size: "small" | "large" = "large"): string {
   const { thumbRoot } = getConfig();
-  // Use .webp for everything except gif which stays as gif
-  const ext = mediaType === "animated" ? ".gif" : ".webp";
+  // Always use WebP for thumbnails — smaller and faster than GIF
+  const ext = ".webp";
   const sizeSuffix = size === "small" ? "_sm" : "";
   return path.join(thumbRoot, `thumb_${mediaId}${sizeSuffix}${ext}`);
 }
@@ -73,35 +73,25 @@ export async function isThumbFresh(
 }
 
 /**
- * Generates a thumbnail for an image (jpg, png, webp, avif).
+ * Generates a thumbnail for an image (jpg, png, webp, avif, gif).
+ * For GIF sources, only the first frame is decoded to avoid expensive full-animation processing.
  */
 async function generateImageThumb(
   srcPath: string,
   destPath: string,
   size: number,
-  quality: number
+  quality: number,
+  isAnimated: boolean = false
 ): Promise<void> {
-  await sharp(srcPath)
+  const pipeline = isAnimated
+    ? sharp(srcPath, { animated: true, pages: 1 })
+    : sharp(srcPath);
+  await pipeline
     .resize(size, size, {
       fit: "inside",
       withoutEnlargement: true,
     })
     .webp({ quality })
-    .toFile(destPath);
-}
-
-/**
- * Generates a thumbnail for a GIF (preserve animation).
- */
-async function generateGifThumb(srcPath: string, destPath: string, size: number): Promise<void> {
-  // For GIF, resize using sharp but preserve animation
-  // sharp will preserve animated input/output for GIF
-  await sharp(srcPath, { animated: true })
-    .resize(size, size, {
-      fit: "inside",
-      withoutEnlargement: true,
-    })
-    .gif()
     .toFile(destPath);
 }
 
@@ -168,7 +158,7 @@ export async function generateThumbnail(
 
   try {
     if (mediaType === "animated") {
-      await generateGifThumb(srcPath, destPath, thumbSize);
+      await generateImageThumb(srcPath, destPath, thumbSize, thumbQuality, true);
     } else if (mediaType === "video") {
       // For video, try to generate a frame thumbnail
       const success = await generateVideoThumb(srcPath, destPath, thumbSize);
@@ -217,7 +207,7 @@ export async function ensureThumbnail(
  */
 async function generateBlurhash(srcPath: string, mediaType: string): Promise<string | null> {
   try {
-    let buffer: Buffer;
+    let pipeline: sharp.Sharp;
 
     if (mediaType === "video") {
       // Extract first frame from video
@@ -233,13 +223,16 @@ async function generateBlurhash(srcPath: string, mediaType: string): Promise<str
         "image2pipe",
         "-",
       ]);
-      buffer = Buffer.from(stdout);
+      pipeline = sharp(Buffer.from(stdout), { animated: false });
+    } else if (mediaType === "animated") {
+      // Only decode the first frame of a GIF, avoiding a full buffer read into memory
+      pipeline = sharp(srcPath, { animated: true, pages: 1 });
     } else {
-      buffer = await fs.promises.readFile(srcPath);
+      pipeline = sharp(srcPath);
     }
 
     // Resize to small for blurhash calculation
-    const { data, info } = await sharp(buffer, { animated: false })
+    const { data, info } = await pipeline
       .resize(32, 32, { fit: "inside" })
       .ensureAlpha()
       .raw()

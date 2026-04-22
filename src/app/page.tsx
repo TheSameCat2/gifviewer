@@ -58,12 +58,12 @@ export default async function GalleryPage({ searchParams }: PageProps) {
   const selectedMedia = selectedMediaId ? getMediaById(selectedMediaId) : null;
   const selectedMediaTags = selectedMedia ? getTagsForMedia(selectedMedia.id) : [];
 
-  // Parse page param as "loaded page count" (1-based)
-  let requestedLoadedPages = 1;
+  // Parse page param (used for media navigation context only)
+  let requestedPage = 1;
   if (pageParam !== undefined) {
     const parsed = parseInt(pageParam, 10);
     if (!isNaN(parsed) && parsed >= 1) {
-      requestedLoadedPages = parsed;
+      requestedPage = parsed;
     }
   }
 
@@ -72,32 +72,23 @@ export default async function GalleryPage({ searchParams }: PageProps) {
   const totalMediaCount = selectedFolder ? getMediaCountByFolder(selectedFolder.id) : 0;
   const totalPages = Math.max(1, Math.ceil(totalMediaCount / PAGE_SIZE));
 
-  // Clamp requested loaded pages to valid range
-  const clampedRequestedPages = Math.min(requestedLoadedPages, totalPages);
-
   // If a selected media item belongs to the selected folder, derive its page
   const selectedMediaPage =
     selectedMedia && selectedFolderId !== null && selectedMedia.folder_id === selectedFolderId
-      ? getMediaPageForFolderItem(selectedFolderId, selectedMediaId!, PAGE_SIZE) ?? clampedRequestedPages
+      ? getMediaPageForFolderItem(selectedFolderId, selectedMediaId!, PAGE_SIZE) ?? requestedPage
       : null;
 
-  // Effective loaded-page count: max of requested or selected media's page
-  const effectiveLoadedPages = selectedMediaPage !== null
-    ? Math.max(clampedRequestedPages, selectedMediaPage)
-    : clampedRequestedPages;
+  // Hydrate only the first page server-side; client infinite-scroll fetches the rest
+  const ssrLimit = PAGE_SIZE;
 
-  // Clamp to total pages
-  const finalLoadedPages = Math.min(effectiveLoadedPages, totalPages);
-
-  // Fetch initial media list: first `finalLoadedPages * PAGE_SIZE` items
+  // Fetch initial media list: exactly one page
   const initialMediaItems = selectedFolder
-    ? getMediaByFolderPaginated(selectedFolder.id, finalLoadedPages * PAGE_SIZE, 0)
+    ? getMediaByFolderPaginated(selectedFolder.id, ssrLimit, 0)
     : [];
 
   const breadcrumbs = selectedFolderId ? getFolderBreadcrumbs(selectedFolderId) : [];
 
   // Compute previousHref/nextHref for fullscreen navigation
-  // Use max(effectiveLoadedPages, pageForAdjacentItem) to ensure loaded page count is preserved
   let previousHref: string | null = null;
   let nextHref: string | null = null;
   if (selectedMedia && selectedFolderId !== null) {
@@ -106,22 +97,20 @@ export default async function GalleryPage({ searchParams }: PageProps) {
 
     if (previousId !== null) {
       const prevPage =
-        getMediaPageForFolderItem(selectedFolderId, previousId, PAGE_SIZE) ?? finalLoadedPages;
-      const hrefPage = Math.max(finalLoadedPages, prevPage);
-      previousHref = `${folderPart}&page=${hrefPage}&media=${previousId}`;
+        getMediaPageForFolderItem(selectedFolderId, previousId, PAGE_SIZE) ?? 1;
+      previousHref = `${folderPart}&page=${prevPage}&media=${previousId}`;
     }
 
     if (nextId !== null) {
       const nextPage =
-        getMediaPageForFolderItem(selectedFolderId, nextId, PAGE_SIZE) ?? finalLoadedPages;
-      const hrefPage = Math.max(finalLoadedPages, nextPage);
-      nextHref = `${folderPart}&page=${hrefPage}&media=${nextId}`;
+        getMediaPageForFolderItem(selectedFolderId, nextId, PAGE_SIZE) ?? 1;
+      nextHref = `${folderPart}&page=${nextPage}&media=${nextId}`;
     }
   }
 
-  // backHref preserves the current loaded-page count when closing fullscreen
+  // backHref points to the selected media's page (or the requested page as fallback)
   const backHref = selectedFolderId !== null
-    ? `/?folder=${selectedFolderId}&page=${finalLoadedPages}`
+    ? `/?folder=${selectedFolderId}&page=${selectedMediaPage ?? requestedPage}`
     : "/";
 
   const libraryExists = hasFolders();
@@ -143,7 +132,7 @@ export default async function GalleryPage({ searchParams }: PageProps) {
   // Get all available tags
   const allTags = getAllTags();
 
-  // Filter-mode data: load search results server-side
+  // Filter-mode data: hydrate only one page server-side
   let filterInitialItems: import("@/lib/db/media").MediaRow[] = [];
   let filterTotalCount = 0;
   if (isFilterMode && (activeTags.length > 0 || activeRating > 0)) {
@@ -151,7 +140,7 @@ export default async function GalleryPage({ searchParams }: PageProps) {
       folderId: selectedFolderId,
       minRating: activeRating,
       tagIds: activeTags,
-      limit: finalLoadedPages * PAGE_SIZE,
+      limit: ssrLimit,
       offset: 0,
     });
     filterInitialItems = raw.items;
@@ -284,7 +273,7 @@ export default async function GalleryPage({ searchParams }: PageProps) {
                   <MediaGrid
                     initialItems={filterInitialItems}
                     folderId={selectedFolderId ?? 0}
-                    initialLoadedPages={finalLoadedPages}
+                    initialLoadedPages={1}
                     totalCount={filterTotalCount}
                     pageSize={PAGE_SIZE}
                     isFilterMode={true}
@@ -345,7 +334,7 @@ export default async function GalleryPage({ searchParams }: PageProps) {
                     {totalPages > 1 && (
                       <div className="flex items-center gap-2 text-sm text-zinc-500 dark:text-zinc-400">
                         <span>
-                          Showing {finalLoadedPages * PAGE_SIZE >= totalMediaCount ? "all" : `${finalLoadedPages * PAGE_SIZE} of`} {totalMediaCount}
+                          Showing {PAGE_SIZE} per page
                         </span>
                       </div>
                     )}
@@ -353,7 +342,7 @@ export default async function GalleryPage({ searchParams }: PageProps) {
                   <MediaGrid
                     initialItems={initialMediaItems}
                     folderId={selectedFolderId ?? 0}
-                    initialLoadedPages={finalLoadedPages}
+                    initialLoadedPages={1}
                     totalCount={totalMediaCount}
                     pageSize={PAGE_SIZE}
                   />
