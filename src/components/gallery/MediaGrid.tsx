@@ -159,13 +159,12 @@ export function MediaGrid({
     if (!el || !mounted) return;
 
     const updateOffset = () => {
-      let offset = 0;
-      let parent = el as HTMLElement | null;
-      while (parent) {
-        offset += parent.offsetTop;
-        parent = parent.offsetParent as HTMLElement | null;
-      }
-      setScrollMargin(offset);
+      // Document-relative top of the grid container. getBoundingClientRect is
+      // transform-safe and handles fixed/relative ancestors, unlike summing
+      // offsetTop up the offsetParent chain.
+      const rect = el.getBoundingClientRect();
+      const scrollTop = window.scrollY || document.documentElement.scrollTop;
+      setScrollMargin(rect.top + scrollTop);
     };
 
     updateOffset();
@@ -186,11 +185,6 @@ export function MediaGrid({
     overscan: 5,
     scrollMargin,
   });
-
-  // Force virtualization re-measurement when rowHeight changes (e.g. on resize)
-  useEffect(() => {
-    virtualizer.measure();
-  }, [rowHeight, virtualizer]);
 
   // Stable ref for the virtualizer to avoid hook dependency cycle warnings
   const virtualizerRef = useRef(virtualizer);
