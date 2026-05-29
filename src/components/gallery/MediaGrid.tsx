@@ -34,6 +34,12 @@ function columnsForWidth(width: number): number {
   return 2;
 }
 
+/** Document-relative top offset of an element. Transform-safe, unlike summing offsetTop. */
+function documentTop(el: HTMLElement): number {
+  const scrollTop = window.scrollY || document.documentElement.scrollTop;
+  return el.getBoundingClientRect().top + scrollTop;
+}
+
 interface ClipboardState {
   mediaId: number;
   operation: "copy" | "cut";
@@ -129,7 +135,13 @@ export function MediaGrid({
   const [mounted, setMounted] = useState(false);
   useEffect(() => {
     const el = containerRef.current;
-    if (el) setContainerWidth(el.clientWidth);
+    if (el) {
+      setContainerWidth(el.clientWidth);
+      // Seed scrollMargin synchronously too, so the first virtualized frame —
+      // and any scroll restoration that runs on it — uses the real document
+      // offset instead of 0. The offset effect below keeps it updated on resize.
+      setScrollMargin(documentTop(el));
+    }
     setColumns(columnsForWidth(window.innerWidth));
     setMounted(true);
   }, []);
@@ -160,14 +172,7 @@ export function MediaGrid({
     const el = containerRef.current;
     if (!el || !mounted) return;
 
-    const updateOffset = () => {
-      // Document-relative top of the grid container. getBoundingClientRect is
-      // transform-safe and handles fixed/relative ancestors, unlike summing
-      // offsetTop up the offsetParent chain.
-      const rect = el.getBoundingClientRect();
-      const scrollTop = window.scrollY || document.documentElement.scrollTop;
-      setScrollMargin(rect.top + scrollTop);
-    };
+    const updateOffset = () => setScrollMargin(documentTop(el));
 
     updateOffset();
     window.addEventListener("resize", updateOffset);
