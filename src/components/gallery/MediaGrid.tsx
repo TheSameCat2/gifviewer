@@ -25,6 +25,21 @@ interface MediaGridProps {
 
 type MediaItem = MediaGridItem;
 
+/** Column count for a given viewport width — matches the Tailwind grid breakpoints exactly. */
+function columnsForWidth(width: number): number {
+  if (width >= 1280) return 6;
+  if (width >= 1024) return 5;
+  if (width >= 768) return 4;
+  if (width >= 640) return 3;
+  return 2;
+}
+
+/** Document-relative top offset of an element. Transform-safe, unlike summing offsetTop. */
+function documentTop(el: HTMLElement): number {
+  const scrollTop = window.scrollY || document.documentElement.scrollTop;
+  return el.getBoundingClientRect().top + scrollTop;
+}
+
 interface ClipboardState {
   mediaId: number;
   operation: "copy" | "cut";
@@ -106,28 +121,36 @@ export function MediaGrid({
   // Context menu state
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; item: MediaItem } | null>(null);
 
-  // Mounted state for server pre-rendering / client hydration safety
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-
   // Refs and state for virtualization sizing
   const containerRef = useRef<HTMLDivElement>(null);
   const [containerWidth, setContainerWidth] = useState(0);
   const [columns, setColumns] = useState(2);
   const [scrollMargin, setScrollMargin] = useState(0);
 
+  // Mounted state for server pre-rendering / client hydration safety.
+  // containerRef is attached to the non-virtualized grid too, so we can measure
+  // the real width and column count synchronously here — before swapping to the
+  // virtualized grid — avoiding a first-frame layout shift (cellHeight default /
+  // columns=2) and an incorrect rowIndex in scroll restoration.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    const el = containerRef.current;
+    if (el) {
+      setContainerWidth(el.clientWidth);
+      // Seed scrollMargin synchronously too, so the first virtualized frame —
+      // and any scroll restoration that runs on it — uses the real document
+      // offset instead of 0. The offset effect below keeps it updated on resize.
+      setScrollMargin(documentTop(el));
+    }
+    setColumns(columnsForWidth(window.innerWidth));
+    setMounted(true);
+  }, []);
+
   // Always keep a ref to the latest items to prevent stale closure bugs in restoration
   const itemsRef = useRef(items);
   useEffect(() => {
     itemsRef.current = items;
   }, [items]);
-
-  const columnsRef = useRef(columns);
-  useEffect(() => {
-    columnsRef.current = columns;
-  }, [columns]);
 
   // ResizeObserver for dynamic column calculation and width tracking
   useEffect(() => {
@@ -136,17 +159,8 @@ export function MediaGrid({
 
     const observer = new ResizeObserver((entries) => {
       if (!entries || entries.length === 0) return;
-      const width = entries[0].target.clientWidth;
-      setContainerWidth(width);
-
-      // Match Tailwind breakpoints exactly
-      const w = window.innerWidth;
-      let cols = 2;
-      if (w >= 1280) cols = 6;
-      else if (w >= 1024) cols = 5;
-      else if (w >= 768) cols = 4;
-      else if (w >= 640) cols = 3;
-      setColumns(cols);
+      setContainerWidth(entries[0].target.clientWidth);
+      setColumns(columnsForWidth(window.innerWidth));
     });
 
     observer.observe(el);
@@ -158,14 +172,7 @@ export function MediaGrid({
     const el = containerRef.current;
     if (!el || !mounted) return;
 
-    const updateOffset = () => {
-      // Document-relative top of the grid container. getBoundingClientRect is
-      // transform-safe and handles fixed/relative ancestors, unlike summing
-      // offsetTop up the offsetParent chain.
-      const rect = el.getBoundingClientRect();
-      const scrollTop = window.scrollY || document.documentElement.scrollTop;
-      setScrollMargin(rect.top + scrollTop);
-    };
+    const updateOffset = () => setScrollMargin(documentTop(el));
 
     updateOffset();
     window.addEventListener("resize", updateOffset);
@@ -299,7 +306,9 @@ export function MediaGrid({
           const currentItems = itemsRef.current;
           const itemIndex = currentItems.findIndex((i) => i.id === mediaId);
           if (itemIndex !== -1) {
-            const rowIndex = Math.floor(itemIndex / columnsRef.current);
+            // Derive columns from the viewport directly so restoration is correct
+            // even if the columns state hasn't settled yet on a fresh mount.
+            const rowIndex = Math.floor(itemIndex / columnsForWidth(window.innerWidth));
             virtualizerRef.current.scrollToIndex(rowIndex, { align: "start" });
           } else {
             window.scrollTo({ top: scrollY, behavior: "instant" });
@@ -460,7 +469,7 @@ export function MediaGrid({
       </div>
 
       {!mounted ? (
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
+        <div ref={containerRef} className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
           {items.map((item) => {
             const href = buildHref(item.id);
             const thumbSrc = `/api/thumbs/${item.id}?size=small`;
