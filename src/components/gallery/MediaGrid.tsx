@@ -7,6 +7,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { MediaGridItem } from "@/lib/db/media";
 import { ContextMenu, ContextMenuEntry } from "./ContextMenu";
 import { blurhashToDataUrl } from "@/lib/media/blurhash";
+import { useWindowVirtualizer } from "@tanstack/react-virtual";
 
 interface MediaGridProps {
   initialItems: MediaGridItem[];
@@ -20,10 +21,6 @@ interface MediaGridProps {
   filterTags?: number[];
   /** Active rating filter — only used when isFilterMode is true */
   filterRating?: number;
-}
-
-function isVideoMime(mimeType: string | null): boolean {
-  return mimeType === "video/webm";
 }
 
 type MediaItem = MediaGridItem;
@@ -109,6 +106,92 @@ export function MediaGrid({
   // Context menu state
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; item: MediaItem } | null>(null);
 
+  // Mounted state for server pre-rendering / client hydration safety
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  // Refs and state for virtualization sizing
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [containerWidth, setContainerWidth] = useState(0);
+  const [columns, setColumns] = useState(2);
+  const [scrollMargin, setScrollMargin] = useState(0);
+
+  // Always keep a ref to the latest items to prevent stale closure bugs in restoration
+  const itemsRef = useRef(items);
+  useEffect(() => {
+    itemsRef.current = items;
+  }, [items]);
+
+  const columnsRef = useRef(columns);
+  useEffect(() => {
+    columnsRef.current = columns;
+  }, [columns]);
+
+  // ResizeObserver for dynamic column calculation and width tracking
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el || !mounted) return;
+
+    const observer = new ResizeObserver((entries) => {
+      if (!entries || entries.length === 0) return;
+      const width = entries[0].target.clientWidth;
+      setContainerWidth(width);
+
+      // Match Tailwind breakpoints exactly
+      const w = window.innerWidth;
+      let cols = 2;
+      if (w >= 1280) cols = 6;
+      else if (w >= 1024) cols = 5;
+      else if (w >= 768) cols = 4;
+      else if (w >= 640) cols = 3;
+      setColumns(cols);
+    });
+
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [mounted]);
+
+  // Track absolute offset position (scrollMargin) dynamically walking up offset parents
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el || !mounted) return;
+
+    const updateOffset = () => {
+      // Document-relative top of the grid container. getBoundingClientRect is
+      // transform-safe and handles fixed/relative ancestors, unlike summing
+      // offsetTop up the offsetParent chain.
+      const rect = el.getBoundingClientRect();
+      const scrollTop = window.scrollY || document.documentElement.scrollTop;
+      setScrollMargin(rect.top + scrollTop);
+    };
+
+    updateOffset();
+    window.addEventListener("resize", updateOffset);
+    return () => window.removeEventListener("resize", updateOffset);
+  }, [mounted]);
+
+  const gapSize = 12; // gap-3 is 0.75rem (12px)
+  const cellHeight = containerWidth > 0 ? (containerWidth - (columns - 1) * gapSize) / columns : 150;
+  const rowHeight = cellHeight + gapSize;
+
+  // WARNING: This virtualizer relies on window scrolling. 
+  // If parent elements (like <main>) are set to overflow-auto or h-screen, 
+  // window scroll events will not propagate to the document, breaking virtualization.
+  const virtualizer = useWindowVirtualizer({
+    count: Math.ceil(items.length / columns),
+    estimateSize: () => rowHeight,
+    overscan: 5,
+    scrollMargin,
+  });
+
+  // Stable ref for the virtualizer to avoid hook dependency cycle warnings
+  const virtualizerRef = useRef(virtualizer);
+  useEffect(() => {
+    virtualizerRef.current = virtualizer;
+  }, [virtualizer]);
+
   // Fetch clipboard state on mount and after folder changes
   useEffect(() => {
     fetch("/api/clipboard")
@@ -184,6 +267,7 @@ export function MediaGrid({
       setItems(initialItems);
       setLoadedPages(initialLoadedPages);
       lastFolderIdRef.current = folderId;
+      window.scrollTo({ top: 0, behavior: "instant" });
     } else {
       // Same folder: merge server-fresh page-1 items, remove deleted ones
       setItems((prev) => {
@@ -212,11 +296,11 @@ export function MediaGrid({
         sessionStorage.removeItem("mediaGridScroll");
         const { scrollY, mediaId } = JSON.parse(saved);
         requestAnimationFrame(() => {
-          const el = document.querySelector(
-            `[data-media-id="${mediaId}"]`
-          );
-          if (el) {
-            el.scrollIntoView({ block: "start", behavior: "instant" });
+          const currentItems = itemsRef.current;
+          const itemIndex = currentItems.findIndex((i) => i.id === mediaId);
+          if (itemIndex !== -1) {
+            const rowIndex = Math.floor(itemIndex / columnsRef.current);
+            virtualizerRef.current.scrollToIndex(rowIndex, { align: "start" });
           } else {
             window.scrollTo({ top: scrollY, behavior: "instant" });
           }
@@ -375,66 +459,162 @@ export function MediaGrid({
         )}
       </div>
 
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
-        {items.map((item) => {
-          const isVideo = isVideoMime(item.mime_type);
-          const href = buildHref(item.id);
-          const thumbSrc = `/api/thumbs/${item.id}?size=small`;
-          const isCutSource = clipboard?.operation === "cut" && clipboard?.mediaId === item.id;
+      {!mounted ? (
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
+          {items.map((item) => {
+            const href = buildHref(item.id);
+            const thumbSrc = `/api/thumbs/${item.id}?size=small`;
+            const isCutSource = clipboard?.operation === "cut" && clipboard?.mediaId === item.id;
 
-          return (
-            <div
-              key={item.id}
-              data-media-id={item.id}
-              className={`group relative flex aspect-square items-center justify-center overflow-hidden rounded-lg bg-zinc-100 dark:bg-zinc-800 ${
-                isCutSource ? "ring-2 ring-yellow-400 opacity-60" : ""
-              }`}
-              onContextMenu={(e) => {
-                e.preventDefault();
-                setCtxMenu({ x: e.clientX, y: e.clientY, item });
-              }}
-            >
-              <Link
-                href={href}
-                scroll={false}
-                onClick={() => {
-                  sessionStorage.setItem(
-                    "mediaGridScroll",
-                    JSON.stringify({
-                      scrollY: window.scrollY,
-                      mediaId: item.id,
-                    })
-                  );
+            return (
+              <div
+                key={item.id}
+                data-media-id={item.id}
+                className={`group relative flex aspect-square items-center justify-center overflow-hidden rounded-lg bg-zinc-100 dark:bg-zinc-800 ${
+                  isCutSource ? "ring-2 ring-yellow-400 opacity-60" : ""
+                }`}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  setCtxMenu({ x: e.clientX, y: e.clientY, item });
                 }}
-                className="absolute inset-0"
               >
-                {/* Blurhash placeholder */}
-                {item.thumb_blurhash && (
-                  <BlurhashPlaceholder hash={item.thumb_blurhash} />
-                )}
-                {/* Thumbnail image with zero-React-render load transition */}
-                <Image
-                  src={thumbSrc}
-                  alt={item.filename}
-                  fill
-                  unoptimized
-                  sizes="(min-width: 1280px) 16vw, (min-width: 1024px) 20vw, (min-width: 768px) 25vw, 50vw"
-                  className="object-cover transition-opacity opacity-0"
-                  onLoad={(e) => {
-                    const el = e.currentTarget as HTMLElement;
-                    el.classList.remove("opacity-0");
-                    el.classList.add("opacity-100");
+                <Link
+                  href={href}
+                  scroll={false}
+                  onClick={() => {
+                    sessionStorage.setItem(
+                      "mediaGridScroll",
+                      JSON.stringify({
+                        scrollY: window.scrollY,
+                        mediaId: item.id,
+                      })
+                    );
                   }}
-                />
-                {/* Overlay with filename */}
-                <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/60 to-transparent px-2 py-2 opacity-0 transition-opacity group-hover:opacity-100">
-                  <p className="truncate text-xs text-white">{item.filename}</p>
+                  className="absolute inset-0"
+                >
+                  {/* Blurhash placeholder */}
+                  {item.thumb_blurhash && (
+                    <BlurhashPlaceholder hash={item.thumb_blurhash} />
+                  )}
+                  {/* Thumbnail image with zero-React-render load transition */}
+                  <Image
+                    src={thumbSrc}
+                    alt={item.filename}
+                    fill
+                    unoptimized
+                    sizes="(min-width: 1280px) 16vw, (min-width: 1024px) 20vw, (min-width: 768px) 25vw, 50vw"
+                    className="object-cover transition-opacity opacity-0"
+                    onLoad={(e) => {
+                      const el = e.currentTarget as HTMLElement;
+                      el.classList.remove("opacity-0");
+                      el.classList.add("opacity-100");
+                    }}
+                  />
+                  {/* Overlay with filename */}
+                  <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/60 to-transparent px-2 py-2 opacity-0 transition-opacity group-hover:opacity-100">
+                    <p className="truncate text-xs text-white">{item.filename}</p>
+                  </div>
+                </Link>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <div ref={containerRef} className="w-full">
+          <div
+            style={{
+              height: `${virtualizer.getTotalSize()}px`,
+              width: "100%",
+              position: "relative",
+            }}
+          >
+            {virtualizer.getVirtualItems().map((virtualRow) => {
+              const rowIndex = virtualRow.index;
+              const rowItems = items.slice(rowIndex * columns, (rowIndex + 1) * columns);
+
+              return (
+                <div
+                  key={virtualRow.key}
+                  data-index={virtualRow.index}
+                  style={{
+                    position: "absolute",
+                    top: 0,
+                    left: 0,
+                    width: "100%",
+                    height: `${cellHeight}px`,
+                    transform: `translateY(${virtualRow.start - scrollMargin}px)`,
+                  }}
+                >
+                  <div
+                    className="grid w-full h-full gap-3"
+                    style={{
+                      gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
+                    }}
+                  >
+                    {rowItems.map((item) => {
+                      const href = buildHref(item.id);
+                      const thumbSrc = `/api/thumbs/${item.id}?size=small`;
+                      const isCutSource = clipboard?.operation === "cut" && clipboard?.mediaId === item.id;
+
+                      return (
+                        <div
+                          key={item.id}
+                          data-media-id={item.id}
+                          className={`group relative flex aspect-square items-center justify-center overflow-hidden rounded-lg bg-zinc-100 dark:bg-zinc-800 ${
+                            isCutSource ? "ring-2 ring-yellow-400 opacity-60" : ""
+                          }`}
+                          onContextMenu={(e) => {
+                            e.preventDefault();
+                            setCtxMenu({ x: e.clientX, y: e.clientY, item });
+                          }}
+                        >
+                          <Link
+                            href={href}
+                            scroll={false}
+                            onClick={() => {
+                              sessionStorage.setItem(
+                                "mediaGridScroll",
+                                JSON.stringify({
+                                  scrollY: window.scrollY,
+                                  mediaId: item.id,
+                                })
+                              );
+                            }}
+                            className="absolute inset-0"
+                          >
+                            {/* Blurhash placeholder */}
+                            {item.thumb_blurhash && (
+                              <BlurhashPlaceholder hash={item.thumb_blurhash} />
+                            )}
+                            {/* Thumbnail image with zero-React-render load transition */}
+                            <Image
+                              src={thumbSrc}
+                              alt={item.filename}
+                              fill
+                              unoptimized
+                              sizes="(min-width: 1280px) 16vw, (min-width: 1024px) 20vw, (min-width: 768px) 25vw, 50vw"
+                              className="object-cover transition-opacity opacity-0"
+                              onLoad={(e) => {
+                                const el = e.currentTarget as HTMLElement;
+                                el.classList.remove("opacity-0");
+                                el.classList.add("opacity-100");
+                              }}
+                            />
+                            {/* Overlay with filename */}
+                            <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/60 to-transparent px-2 py-2 opacity-0 transition-opacity group-hover:opacity-100">
+                              <p className="truncate text-xs text-white">{item.filename}</p>
+                            </div>
+                          </Link>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
-              </Link>
-            </div>
-          );
-        })}
-      </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Context menu */}
       {ctxMenu && (

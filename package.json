@@ -9,6 +9,7 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@tanstack/react-virtual": "^3.13.26",
     "better-sqlite3": "^12.9.0",
     "mime-types": "^3.0.2",
     "next": "16.2.3",
