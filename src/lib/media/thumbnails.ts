@@ -84,7 +84,7 @@ async function generateImageThumb(
   isAnimated: boolean = false
 ): Promise<void> {
   const pipeline = isAnimated
-    ? sharp(srcPath, { animated: true, pages: 1 })
+    ? sharp(srcPath, { animated: true })
     : sharp(srcPath);
   await pipeline
     .resize(size, size, {
