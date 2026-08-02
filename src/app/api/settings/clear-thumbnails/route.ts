@@ -3,7 +3,11 @@ import fs from "fs";
 import path from "path";
 import { getConfig } from "@/lib/config";
 import { getDb } from "@/lib/db";
-import { generateThumbnail } from "@/lib/media/thumbnails";
+import {
+  generateThumbnail,
+  generateMotionThumbnail,
+  supportsMotionPreview,
+} from "@/lib/media/thumbnails";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -58,6 +62,9 @@ export async function POST() {
           try {
             await generateThumbnail(row.id, row.relative_path, row.media_type, "small");
             await generateThumbnail(row.id, row.relative_path, row.media_type, "large");
+            if (supportsMotionPreview(row.media_type)) {
+              await generateMotionThumbnail(row.id, row.relative_path, row.media_type);
+            }
           } catch (err) {
             console.warn(`Background thumb regen failed for ${row.id}:`, err);
           }
