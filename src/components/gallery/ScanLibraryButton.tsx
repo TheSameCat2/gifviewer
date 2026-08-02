@@ -1,6 +1,9 @@
 "use client";
 
 import { useState } from "react";
+import { AnimatePresence, motion } from "motion/react";
+import { Loader2Icon, RefreshCwIcon } from "lucide-react";
+import { Button } from "@/components/ui/button";
 
 interface ScanLibraryButtonProps {
   currentFolder?: string;
@@ -23,8 +26,8 @@ export function ScanLibraryButton({ currentFolder }: ScanLibraryButtonProps) {
             `Added: ${s.foldersAdded} folders, ${s.filesAdded} files. ` +
             `Updated: ${s.filesUpdated}. Removed: ${s.filesRemoved}.`
         );
-        // Force page reload to refresh data
-        window.location.href = window.location.pathname + (currentFolder ? `?folder=${currentFolder}` : "");
+        window.location.href =
+          window.location.pathname + (currentFolder ? `?folder=${currentFolder}` : "");
       } else {
         setResult(`Scan failed: ${data.error ?? "unknown error"}`);
       }
@@ -37,16 +40,27 @@ export function ScanLibraryButton({ currentFolder }: ScanLibraryButtonProps) {
 
   return (
     <div className="flex flex-col gap-2">
-      <button
-        onClick={handleScan}
-        disabled={scanning}
-        className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-500 disabled:opacity-50"
-      >
+      <Button onClick={handleScan} disabled={scanning} size="lg">
+        {scanning ? (
+          <Loader2Icon className="animate-spin" data-icon="inline-start" />
+        ) : (
+          <RefreshCwIcon data-icon="inline-start" />
+        )}
         {scanning ? "Scanning…" : "Scan library"}
-      </button>
-      {result && (
-        <p className="text-xs text-zinc-600 dark:text-zinc-400">{result}</p>
-      )}
+      </Button>
+      <AnimatePresence>
+        {result && (
+          <motion.p
+            initial={{ opacity: 0, y: -4 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -4 }}
+            transition={{ duration: 0.2 }}
+            className="text-xs text-muted-foreground"
+          >
+            {result}
+          </motion.p>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

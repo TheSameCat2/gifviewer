@@ -1,6 +1,20 @@
 "use client";
 
 import { useState, useCallback } from "react";
+import { AnimatePresence, motion } from "motion/react";
+import { ListFilterIcon, StarIcon, XIcon } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { cn } from "@/lib/utils";
 
 interface FilterBarProps {
   folderId: number;
@@ -61,189 +75,161 @@ export function FilterBar({
       setLocalRating(0);
       onFilterChange(localTags, 0);
     },
-    [localTags, localRating, onFilterChange]
+    [localTags, onFilterChange]
   );
 
-  const handleClose = useCallback(() => {
-    setIsOpen(false);
-    setLocalTags(activeTags);
-    setLocalRating(activeRating);
-  }, [activeTags, activeRating]);
-
-  const handleOpen = useCallback(() => {
-    setLocalTags(activeTags);
-    setLocalRating(activeRating);
-    setIsOpen(true);
-  }, [activeTags, activeRating]);
+  const handleOpenChange = useCallback(
+    (open: boolean) => {
+      setIsOpen(open);
+      if (open) {
+        setLocalTags(activeTags);
+        setLocalRating(activeRating);
+      } else {
+        setLocalTags(activeTags);
+        setLocalRating(activeRating);
+      }
+    },
+    [activeTags, activeRating]
+  );
 
   const activeTagObjects = allTags.filter((t) => activeTags.includes(t.id));
   const hasActiveFilters = activeTags.length > 0 || activeRating > 0;
+  const filterCount = activeTags.length + (activeRating > 0 ? 1 : 0);
 
   return (
     <>
-      {/* Filter toggle button */}
-      <button
-        onClick={handleOpen}
-        className={`relative flex items-center gap-2 rounded-lg border px-3 py-1.5 text-sm font-medium transition ${
-          hasActiveFilters
-            ? "border-blue-300 bg-blue-50 text-blue-700 dark:border-blue-700 dark:bg-blue-900/30 dark:text-blue-300"
-            : "border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700"
-        }`}
+      <Button
+        onClick={() => handleOpenChange(true)}
+        variant={hasActiveFilters ? "secondary" : "outline"}
+        size="sm"
       >
-        <span>⚙️</span>
-        <span>Filter</span>
+        <ListFilterIcon data-icon="inline-start" />
+        Filter
         {hasActiveFilters && (
-          <span className="flex h-5 w-5 items-center justify-center rounded-full bg-blue-500 text-xs text-white">
-            {activeTags.length + (activeRating > 0 ? 1 : 0)}
-          </span>
+          <Badge variant="default" className="ml-0.5 h-5 min-w-5 px-1">
+            {filterCount}
+          </Badge>
         )}
-      </button>
+      </Button>
 
-      {/* Filter panel */}
-      {isOpen && (
-        <>
-          {/* Backdrop */}
-          <div
-            className="fixed inset-0 z-40 bg-black/30"
-            onClick={handleClose}
-          />
+      <Dialog open={isOpen} onOpenChange={handleOpenChange}>
+        <DialogContent className="sm:max-w-md" showCloseButton>
+          <DialogHeader>
+            <DialogTitle>Filter Media</DialogTitle>
+          </DialogHeader>
 
-          {/* Panel */}
-          <div className="fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2 rounded-xl border border-zinc-200 bg-white p-4 shadow-xl dark:border-zinc-700 dark:bg-zinc-900">
-            <div className="mb-4 flex items-center justify-between">
-              <h3 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">
-                Filter Media
-              </h3>
-              <button
-                onClick={handleClose}
-                className="text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200"
-              >
-                ✕
-              </button>
-            </div>
-
-            {/* Rating selector */}
-            <div className="mb-4">
-              <label className="mb-2 block text-sm font-medium text-zinc-700 dark:text-zinc-300">
-                Minimum Rating
-              </label>
+          <div className="space-y-4">
+            <div>
+              <p className="mb-2 text-sm font-medium">Minimum Rating</p>
               <div className="flex items-center gap-1">
                 {[1, 2, 3, 4, 5].map((star) => (
                   <button
                     key={star}
+                    type="button"
                     onClick={() => handleRatingChange(star)}
-                    className={`text-2xl transition ${
+                    className={cn(
+                      "rounded p-0.5 transition-colors",
                       star <= localRating
-                        ? "text-yellow-400"
-                        : "text-zinc-300 dark:text-zinc-600 hover:text-yellow-200"
-                    }`}
+                        ? "text-amber-400"
+                        : "text-muted-foreground/40 hover:text-amber-300"
+                    )}
                     aria-label={`Minimum ${star} star${star !== 1 ? "s" : ""}`}
                   >
-                    ★
+                    <StarIcon
+                      className="size-6"
+                      fill={star <= localRating ? "currentColor" : "none"}
+                    />
                   </button>
                 ))}
                 {localRating > 0 && (
-                  <span className="ml-2 text-sm text-zinc-500 dark:text-zinc-400">
+                  <span className="ml-2 text-sm text-muted-foreground">
                     ({localRating}+)
                   </span>
                 )}
               </div>
             </div>
 
-            {/* Tag checkboxes */}
             {allTags.length > 0 && (
-              <div className="mb-4">
-                <label className="mb-2 block text-sm font-medium text-zinc-700 dark:text-zinc-300">
-                  Tags
-                </label>
-                <div className="max-h-48 overflow-y-auto rounded-lg border border-zinc-200 p-2 dark:border-zinc-700">
-                  <div className="flex flex-wrap gap-2">
-                    {allTags.map((tag) => (
-                      <label
-                        key={tag.id}
-                        className="flex cursor-pointer items-center gap-1.5 rounded px-2 py-1 text-sm transition hover:bg-zinc-100 dark:hover:bg-zinc-800"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={localTags.includes(tag.id)}
-                          onChange={() => handleTagToggle(tag.id)}
-                          className="h-4 w-4 rounded border-zinc-300 text-blue-500 focus:ring-blue-500 dark:border-zinc-600"
-                        />
-                        <span className="text-zinc-700 dark:text-zinc-300">
-                          {tag.name}
-                        </span>
-                      </label>
-                    ))}
+              <div>
+                <p className="mb-2 text-sm font-medium">Tags</p>
+                <ScrollArea className="h-48 rounded-lg border">
+                  <div className="flex flex-wrap gap-2 p-2">
+                    {allTags.map((tag) => {
+                      const checked = localTags.includes(tag.id);
+                      return (
+                        <label
+                          key={tag.id}
+                          className="flex cursor-pointer items-center gap-1.5 rounded-md px-2 py-1 text-sm transition-colors hover:bg-muted"
+                        >
+                          <Checkbox
+                            checked={checked}
+                            onCheckedChange={() => handleTagToggle(tag.id)}
+                          />
+                          <span>{tag.name}</span>
+                        </label>
+                      );
+                    })}
                   </div>
-                </div>
+                </ScrollArea>
               </div>
             )}
-
-            {/* Actions */}
-            <div className="flex items-center justify-between">
-              <button
-                onClick={handleClearAll}
-                className="text-sm text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200"
-              >
-                Clear All
-              </button>
-              <div className="flex gap-2">
-                <button
-                  onClick={handleClose}
-                  className="rounded-lg border border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleApply}
-                  className="rounded-lg bg-blue-500 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-600"
-                >
-                  Apply
-                </button>
-              </div>
-            </div>
           </div>
-        </>
-      )}
 
-      {/* Active filter pills */}
-      {hasActiveFilters && !isOpen && (
-        <div className="flex flex-wrap items-center gap-2">
-          {activeTagObjects.map((tag) => (
-            <span
-              key={tag.id}
-              className="flex items-center gap-1 rounded-full bg-blue-100 px-3 py-1 text-sm text-blue-700 dark:bg-blue-900/40 dark:text-blue-300"
-            >
-              {tag.name}
-              <button
-                onClick={(e) => handleRemoveTag(tag.id, e)}
-                className="ml-0.5 hover:text-blue-900 dark:hover:text-blue-100"
-                aria-label={`Remove ${tag.name} filter`}
-              >
-                ✕
-              </button>
-            </span>
-          ))}
-          {activeRating > 0 && (
-            <span className="flex items-center gap-1 rounded-full bg-yellow-100 px-3 py-1 text-sm text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-300">
-              <span>★ {activeRating}+</span>
-              <button
-                onClick={handleRemoveRating}
-                className="ml-0.5 hover:text-yellow-900 dark:hover:text-yellow-100"
-                aria-label="Remove rating filter"
-              >
-                ✕
-              </button>
-            </span>
-          )}
-          <button
-            onClick={handleClearAll}
-            className="text-sm text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200"
+          <DialogFooter className="sm:justify-between">
+            <Button variant="ghost" onClick={handleClearAll}>
+              Clear All
+            </Button>
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={() => handleOpenChange(false)}>
+                Cancel
+              </Button>
+              <Button onClick={handleApply}>Apply</Button>
+            </div>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <AnimatePresence>
+        {hasActiveFilters && !isOpen && (
+          <motion.div
+            initial={{ opacity: 0, y: -4 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -4 }}
+            className="flex flex-wrap items-center gap-2"
           >
-            Clear All
-          </button>
-        </div>
-      )}
+            {activeTagObjects.map((tag) => (
+              <Badge key={tag.id} variant="secondary" className="gap-1 pr-1">
+                {tag.name}
+                <button
+                  type="button"
+                  onClick={(e) => handleRemoveTag(tag.id, e)}
+                  className="rounded-full p-0.5 hover:bg-foreground/10"
+                  aria-label={`Remove ${tag.name} filter`}
+                >
+                  <XIcon className="size-3" />
+                </button>
+              </Badge>
+            ))}
+            {activeRating > 0 && (
+              <Badge variant="outline" className="gap-1 border-amber-300/50 pr-1 text-amber-700 dark:text-amber-300">
+                <StarIcon className="size-3" fill="currentColor" />
+                {activeRating}+
+                <button
+                  type="button"
+                  onClick={handleRemoveRating}
+                  className="rounded-full p-0.5 hover:bg-foreground/10"
+                  aria-label="Remove rating filter"
+                >
+                  <XIcon className="size-3" />
+                </button>
+              </Badge>
+            )}
+            <Button variant="ghost" size="xs" onClick={handleClearAll}>
+              Clear All
+            </Button>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </>
   );
 }

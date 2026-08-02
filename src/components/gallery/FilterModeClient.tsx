@@ -2,7 +2,9 @@
 
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback } from "react";
+import { motion } from "motion/react";
 import { FilterBar } from "./FilterBar";
+import { Button } from "@/components/ui/button";
 
 interface FilterModeClientProps {
   folderId: number;
@@ -35,7 +37,6 @@ export function FilterModeClient({
       } else {
         params.delete("rating");
       }
-      // Stay in filter mode
       if (!params.has("filter")) {
         params.set("filter", "1");
       }
@@ -57,17 +58,17 @@ export function FilterModeClient({
   }
 
   return (
-    <div className="mb-4 rounded-lg border border-blue-200 bg-blue-50 p-4 dark:border-blue-800 dark:bg-blue-900/20">
-      <div className="mb-3 flex items-center justify-between">
-        <h3 className="text-sm font-medium text-blue-700 dark:text-blue-300">
-          Filter Mode
-        </h3>
-        <button
-          onClick={handleExitFilterMode}
-          className="text-sm text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-200"
-        >
+    <motion.div
+      initial={{ opacity: 0, y: -6 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.2 }}
+      className="mb-4 rounded-xl border border-primary/20 bg-accent/60 p-4"
+    >
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <h3 className="text-sm font-medium text-accent-foreground">Filter Mode</h3>
+        <Button variant="ghost" size="xs" onClick={handleExitFilterMode}>
           Exit Filter Mode
-        </button>
+        </Button>
       </div>
       <FilterBar
         folderId={folderId}
@@ -76,6 +77,6 @@ export function FilterModeClient({
         activeRating={activeRating}
         onFilterChange={handleFilterChange}
       />
-    </div>
+    </motion.div>
   );
 }

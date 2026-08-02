@@ -5,7 +5,9 @@ import Link from "next/link";
 import Image from "next/image";
 import { useRouter, useSearchParams } from "next/navigation";
 import { MediaGridItem } from "@/lib/db/media";
+import { ClipboardPasteIcon, UploadIcon } from "lucide-react";
 import { ContextMenu, ContextMenuEntry } from "./ContextMenu";
+import { Button } from "@/components/ui/button";
 import { blurhashToDataUrl } from "@/lib/media/blurhash";
 import { useWindowVirtualizer } from "@tanstack/react-virtual";
 
@@ -70,7 +72,7 @@ function BlurhashPlaceholder({
   if (!dataUrl) {
     return (
       <div 
-        className="absolute inset-0 bg-zinc-200 dark:bg-zinc-700 animate-pulse" 
+        className="absolute inset-0 animate-pulse bg-muted" 
         style={style}
       />
     );
@@ -452,19 +454,15 @@ export function MediaGrid({
     <>
       {/* Toolbar: Upload + Paste */}
       <div className="mb-3 flex gap-2">
-        <button
-          onClick={handleUpload}
-          className="rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700"
-        >
-          + Upload
-        </button>
+        <Button onClick={handleUpload} variant="outline" size="sm">
+          <UploadIcon data-icon="inline-start" />
+          Upload
+        </Button>
         {clipboard !== null && (
-          <button
-            onClick={handlePaste}
-            className="rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700"
-          >
-            📌 Paste ({clipboard.operation})
-          </button>
+          <Button onClick={handlePaste} variant="secondary" size="sm">
+            <ClipboardPasteIcon data-icon="inline-start" />
+            Paste ({clipboard.operation})
+          </Button>
         )}
       </div>
 
@@ -479,8 +477,8 @@ export function MediaGrid({
               <div
                 key={item.id}
                 data-media-id={item.id}
-                className={`group relative flex aspect-square items-center justify-center overflow-hidden rounded-lg bg-zinc-100 dark:bg-zinc-800 ${
-                  isCutSource ? "ring-2 ring-yellow-400 opacity-60" : ""
+                className={`group relative flex aspect-square items-center justify-center overflow-hidden rounded-xl bg-muted ${
+                  isCutSource ? "ring-2 ring-amber-400 opacity-60" : ""
                 }`}
                 onContextMenu={(e) => {
                   e.preventDefault();
@@ -512,7 +510,7 @@ export function MediaGrid({
                     fill
                     unoptimized
                     sizes="(min-width: 1280px) 16vw, (min-width: 1024px) 20vw, (min-width: 768px) 25vw, 50vw"
-                    className="object-cover transition-opacity opacity-0"
+                    className="object-cover opacity-0 transition-opacity duration-300"
                     onLoad={(e) => {
                       const el = e.currentTarget as HTMLElement;
                       el.classList.remove("opacity-0");
@@ -569,8 +567,8 @@ export function MediaGrid({
                         <div
                           key={item.id}
                           data-media-id={item.id}
-                          className={`group relative flex aspect-square items-center justify-center overflow-hidden rounded-lg bg-zinc-100 dark:bg-zinc-800 ${
-                            isCutSource ? "ring-2 ring-yellow-400 opacity-60" : ""
+                          className={`group relative flex aspect-square items-center justify-center overflow-hidden rounded-xl bg-muted ${
+                            isCutSource ? "ring-2 ring-amber-400 opacity-60" : ""
                           }`}
                           onContextMenu={(e) => {
                             e.preventDefault();
@@ -602,7 +600,7 @@ export function MediaGrid({
                               fill
                               unoptimized
                               sizes="(min-width: 1280px) 16vw, (min-width: 1024px) 20vw, (min-width: 768px) 25vw, 50vw"
-                              className="object-cover transition-opacity opacity-0"
+                              className="object-cover opacity-0 transition-opacity duration-300"
                               onLoad={(e) => {
                                 const el = e.currentTarget as HTMLElement;
                                 el.classList.remove("opacity-0");
@@ -639,13 +637,13 @@ export function MediaGrid({
       {hasMore && (
         <div ref={sentinelRef} className="flex justify-center py-4">
           {isLoading && (
-            <span className="text-sm text-zinc-500 dark:text-zinc-400">Loading more...</span>
+            <span className="text-sm text-muted-foreground">Loading more...</span>
           )}
         </div>
       )}
 
       {!hasMore && items.length > 0 && (
-        <p className="py-4 text-center text-sm text-zinc-500 dark:text-zinc-400">
+        <p className="py-4 text-center text-sm text-muted-foreground">
           All {totalCount} items loaded
         </p>
       )}
