@@ -307,6 +307,7 @@ export function FullscreenViewer({
       <Button
         variant="secondary"
         size="sm"
+        nativeButton={false}
         className="absolute left-4 top-4 z-10 bg-black/50 text-white hover:bg-black/70"
         render={<Link href={backHref} scroll={false} />}
       >
@@ -320,6 +321,7 @@ export function FullscreenViewer({
           <Button
             variant="secondary"
             size="sm"
+            nativeButton={false}
             className="bg-black/50 text-white hover:bg-black/70"
             render={<Link href={previousHref} scroll={false} />}
           >
@@ -331,6 +333,7 @@ export function FullscreenViewer({
           <Button
             variant="secondary"
             size="sm"
+            nativeButton={false}
             className="bg-black/50 text-white hover:bg-black/70"
             render={<Link href={nextHref} scroll={false} />}
           >

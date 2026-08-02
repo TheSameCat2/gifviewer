@@ -51,7 +51,12 @@ export default function SettingsPage() {
       <header className="border-b bg-card/80 px-6 py-4 backdrop-blur-md">
         <div className="flex items-center justify-between">
           <h1 className="font-heading text-2xl font-bold tracking-tight">Settings</h1>
-          <Button variant="outline" size="sm" render={<Link href="/" />}>
+          <Button
+            variant="outline"
+            size="sm"
+            nativeButton={false}
+            render={<Link href="/" />}
+          >
             <ArrowLeftIcon data-icon="inline-start" />
             Back to Gallery
           </Button>
