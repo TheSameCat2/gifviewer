@@ -166,13 +166,19 @@ export default async function GalleryPage({ searchParams }: PageProps) {
               <Button
                 variant={isFilterMode ? "secondary" : "outline"}
                 size="sm"
+                nativeButton={false}
                 render={<a href={`/?filter=1&folder=${selectedFolderId}`} />}
               >
                 <ListFilterIcon data-icon="inline-start" />
                 Filter
               </Button>
             )}
-            <Button variant="outline" size="sm" render={<Link href="/settings" />}>
+            <Button
+              variant="outline"
+              size="sm"
+              nativeButton={false}
+              render={<Link href="/settings" />}
+            >
               <SettingsIcon data-icon="inline-start" />
               Settings
             </Button>
