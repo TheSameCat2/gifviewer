@@ -20,6 +20,14 @@ import {
   generateBlurhashForMedia,
   supportsMotionPreview,
 } from "./thumbnails";
+import {
+  clearController,
+  createController,
+  failStaleScanJobs,
+  getActiveController,
+  getActiveScanJob,
+  type ScanController,
+} from "./scan-control";
 
 export interface ScanSummary {
   filesFound: number;
@@ -206,7 +214,8 @@ interface BatchUpsertResult {
 async function batchUpsertFiles(
   db: ReturnType<typeof getDb>,
   items: BatchUpsertItem[],
-  onProgress?: (done: number, total: number) => void
+  onProgress?: (done: number, total: number) => void,
+  controller?: ScanController | null
 ): Promise<BatchUpsertResult> {
   // Phase 1 – preload existing rows into memory
   const existingRows = db
@@ -230,6 +239,7 @@ async function batchUpsertFiles(
   // there may be hundreds of entries; parallel stat avoids serial I/O)
   const STAT_CONCURRENCY = 16;
   for (let i = 0; i < items.length; i += STAT_CONCURRENCY) {
+    await controller?.checkpoint();
     const batch = items.slice(i, i + STAT_CONCURRENCY);
     const results = await Promise.all(
       batch.map(async (item) => {
@@ -276,6 +286,7 @@ async function batchUpsertFiles(
         skipped++;
       }
     }
+    onProgress?.(Math.min(i + STAT_CONCURRENCY, items.length), items.length);
   }
 
   // Phase 2 – probe metadata in parallel batches
@@ -283,6 +294,7 @@ async function batchUpsertFiles(
   const probed: (typeof toProbe[0] & { metadata: MediaMetadata | null })[] = [];
 
   for (let i = 0; i < toProbe.length; i += CONCURRENCY) {
+    await controller?.checkpoint();
     const batch = toProbe.slice(i, i + CONCURRENCY);
     const results = await Promise.all(
       batch.map(async (item) => {
@@ -367,7 +379,8 @@ async function batchUpsertFiles(
  */
 async function generateMediaAssets(
   items: { mediaId: number; relativePath: string; mediaType: string }[],
-  onProgress?: (generated: number, total: number) => void
+  onProgress?: (generated: number, total: number) => void,
+  controller?: ScanController | null
 ): Promise<{ thumbnails: number; blurhashes: number }> {
   const { thumbRoot } = getConfig();
   if (!fs.existsSync(thumbRoot)) {
@@ -400,6 +413,7 @@ async function generateMediaAssets(
     const concurrency = limits[mediaType] ?? 4;
 
     for (let i = 0; i < typeItems.length; i += concurrency) {
+      await controller?.checkpoint();
       const batch = typeItems.slice(i, i + concurrency);
 
       await Promise.all(
@@ -498,8 +512,12 @@ function isDockerBuild(): boolean {
 async function walkDir(
   dirPath: string,
   validFolders: Set<string>,
-  validFiles: Set<string>
+  validFiles: Set<string>,
+  onProgress?: (folders: number, files: number) => void,
+  controller?: ScanController | null
 ): Promise<void> {
+  await controller?.checkpoint();
+
   let entries: fs.Dirent[];
   try {
     entries = await fs.promises.readdir(dirPath, { withFileTypes: true });
@@ -525,9 +543,13 @@ async function walkDir(
     }
   }
 
+  onProgress?.(validFolders.size, validFiles.size);
+
   // Process subdirectories in parallel
   if (subdirs.length > 0) {
-    await Promise.all(subdirs.map((subdir) => walkDir(subdir, validFolders, validFiles)));
+    await Promise.all(
+      subdirs.map((subdir) => walkDir(subdir, validFolders, validFiles, onProgress, controller))
+    );
   }
 }
 
@@ -543,38 +565,154 @@ const zeroSummary: ScanSummary = {
   blurhashesGenerated: 0,
 };
 
+export interface StartScanResult {
+  success: boolean;
+  jobId?: number;
+  alreadyRunning?: boolean;
+  error?: string;
+}
+
 /**
- * Runs a full scan of the media library.
+ * Starts a full library scan asynchronously and returns immediately.
+ * Progress is polled via GET /api/scan; pause/resume via POST actions.
  */
-export async function runFullScan(): Promise<ScanResult> {
+export function startScan(): StartScanResult {
+  // Clear orphaned DB rows only when no in-process worker is attached
+  if (!getActiveController()) {
+    failStaleScanJobs();
+  }
+
+  const active = getActiveScanJob();
+  if (active && getActiveController()) {
+    return { success: true, jobId: active.id, alreadyRunning: true };
+  }
+
   const { mediaRoot } = getConfig();
   const db = getDb();
 
-  // Atomically check for running scans and create a new one using a transaction
   let scanJobId: number;
   try {
     const transaction = db.transaction(() => {
       const existing = db
-        .prepare("SELECT id FROM scan_jobs WHERE status = 'running' LIMIT 1")
-        .get();
+        .prepare("SELECT id FROM scan_jobs WHERE status IN ('running', 'paused') LIMIT 1")
+        .get() as { id: number } | undefined;
       if (existing) {
-        return false; // Indicate scan already running
+        return false as const;
       }
       const scanResult = db
         .prepare(
-          "INSERT INTO scan_jobs (folder_path, status, started_at) VALUES (?, 'running', datetime('now'))"
+          `INSERT INTO scan_jobs (folder_path, status, started_at, phase, progress_message)
+           VALUES (?, 'running', datetime('now'), 'starting', 'Starting scan…')`
         )
         .run(mediaRoot);
       return scanResult.lastInsertRowid as number;
     });
     const result = transaction();
     if (result === false) {
-      return { success: false, summary: zeroSummary, error: "A scan is already running" };
+      const existing = getActiveScanJob();
+      return {
+        success: true,
+        jobId: existing?.id,
+        alreadyRunning: true,
+        error: existing ? undefined : "A scan is already running",
+      };
     }
     scanJobId = result;
   } catch (err) {
-    return { success: false, summary: zeroSummary, error: `Failed to start scan: ${err instanceof Error ? err.message : String(err)}` };
+    return {
+      success: false,
+      error: `Failed to start scan: ${err instanceof Error ? err.message : String(err)}`,
+    };
   }
+
+  const controller = createController(scanJobId);
+
+  // Fire-and-forget worker — HTTP returns immediately
+  void runScanWorker(scanJobId, controller).catch((err) => {
+    console.error("Scan worker crashed:", err);
+    controller.markFailed(err instanceof Error ? err.message : String(err));
+    clearController(scanJobId);
+  });
+
+  return { success: true, jobId: scanJobId };
+}
+
+export function pauseScan(): { success: boolean; error?: string } {
+  const controller = getActiveController();
+  if (!controller) {
+    return { success: false, error: "No active scan to pause" };
+  }
+  controller.requestPause();
+  return { success: true };
+}
+
+export function resumeScan(): { success: boolean; error?: string } {
+  const controller = getActiveController();
+  if (!controller) {
+    return { success: false, error: "No active scan to resume" };
+  }
+  controller.resume();
+  return { success: true };
+}
+
+/** @deprecated Prefer startScan() — kept for any direct callers. */
+export async function runFullScan(): Promise<ScanResult> {
+  const started = startScan();
+  if (!started.success || !started.jobId) {
+    return { success: false, summary: zeroSummary, error: started.error ?? "Failed to start" };
+  }
+
+  // Wait until job leaves running/paused
+  for (;;) {
+    const job = getActiveScanJob();
+    if (!job || (job.id === started.jobId && job.status !== "running" && job.status !== "paused")) {
+      break;
+    }
+    if (!getActiveController() && !getActiveScanJob()) break;
+    const row = getDb()
+      .prepare("SELECT status FROM scan_jobs WHERE id = ?")
+      .get(started.jobId) as { status: string } | undefined;
+    if (!row || row.status === "completed" || row.status === "failed") break;
+    await new Promise((r) => setTimeout(r, 200));
+  }
+
+  const final = getDb()
+    .prepare(
+      `SELECT status, error_message, files_found, files_added, files_updated, files_removed,
+              thumbnails_generated, blurhashes_generated FROM scan_jobs WHERE id = ?`
+    )
+    .get(started.jobId) as {
+    status: string;
+    error_message: string | null;
+    files_found: number;
+    files_added: number;
+    files_updated: number;
+    files_removed: number;
+    thumbnails_generated: number;
+    blurhashes_generated: number;
+  };
+
+  const summary: ScanSummary = {
+    filesFound: final.files_found,
+    filesAdded: final.files_added,
+    filesUpdated: final.files_updated,
+    filesRemoved: final.files_removed,
+    foldersFound: 0,
+    foldersAdded: 0,
+    foldersRemoved: 0,
+    thumbnailsGenerated: final.thumbnails_generated,
+    blurhashesGenerated: final.blurhashes_generated,
+  };
+
+  if (final.status === "failed") {
+    return { success: false, summary, error: final.error_message ?? "Scan failed" };
+  }
+  return { success: true, summary };
+}
+
+async function runScanWorker(scanJobId: number, controller: ScanController): Promise<void> {
+  const { mediaRoot } = getConfig();
+  const db = getDb();
 
   const summary: ScanSummary = {
     filesFound: 0,
@@ -588,46 +726,70 @@ export async function runFullScan(): Promise<ScanResult> {
     blurhashesGenerated: 0,
   };
 
-  // In local-default mode (non-Docker, non-production), ensure mediaRoot exists
-  // to avoid preflight failures in fresh local development environments
   const useLocalDefaults = !isDockerBuild() && process.env.NODE_ENV !== "production";
   if (useLocalDefaults) {
     await fs.promises.mkdir(mediaRoot, { recursive: true });
   }
 
-  // Preflight: verify mediaRoot is accessible before doing any stale cleanup
   try {
     const stat = await fs.promises.stat(mediaRoot);
     if (!stat.isDirectory()) throw new Error("mediaRoot is not a directory");
     await fs.promises.readdir(mediaRoot);
   } catch (preflightError) {
     const msg = preflightError instanceof Error ? preflightError.message : "Unknown error";
-    db.prepare(
-      `UPDATE scan_jobs SET status = 'failed', completed_at = datetime('now'), error_message = ? WHERE id = ?`
-    ).run(msg, scanJobId);
-    return { success: false, summary: zeroSummary, error: `mediaRoot preflight failed: ${msg}` };
+    controller.markFailed(`mediaRoot preflight failed: ${msg}`);
+    clearController(scanJobId);
+    return;
   }
 
   try {
-    // Walk the media directory
+    controller.updateProgress("walking", 0, 0, "Walking media library…");
+
     const validFolders = new Set<string>();
     const validFiles = new Set<string>();
-
-    // Start with root folder
     validFolders.add("");
-    await walkDir(mediaRoot, validFolders, validFiles);
+
+    let lastWalkUpdate = 0;
+    await walkDir(
+      mediaRoot,
+      validFolders,
+      validFiles,
+      (folders, files) => {
+        const now = Date.now();
+        if (now - lastWalkUpdate < 250) return;
+        lastWalkUpdate = now;
+        controller.updateProgress(
+          "walking",
+          files,
+          0,
+          `Found ${files} files in ${folders} folders…`,
+          { files_found: files }
+        );
+      },
+      controller
+    );
 
     summary.foldersFound = validFolders.size;
+    summary.filesFound = validFiles.size;
+    controller.updateProgress(
+      "indexing",
+      0,
+      validFiles.size,
+      `Indexing ${validFiles.size} files…`,
+      { files_found: validFiles.size }
+    );
 
-    // Build folder hierarchy and track folder ID mappings
+    await controller.checkpoint();
+
     const folderIdMap = new Map<string, number>();
-    // First pass: ensure all folders exist
     for (const folderPath of Array.from(validFolders).sort((a, b) => a.length - b.length)) {
-      // Normalize "." to "" for root folder consistency
       const normalizedFolderPath = folderPath === "." ? "" : folderPath;
       let parentId: number | null = null;
       if (normalizedFolderPath !== "") {
-        const parentPath = path.dirname(normalizedFolderPath) === "." ? "" : (path.dirname(normalizedFolderPath) || "");
+        const parentPath =
+          path.dirname(normalizedFolderPath) === "."
+            ? ""
+            : path.dirname(normalizedFolderPath) || "";
         parentId = folderIdMap.get(parentPath) ?? null;
       }
       const { id: folderId, inserted } = upsertFolder(db, normalizedFolderPath, parentId);
@@ -635,94 +797,99 @@ export async function runFullScan(): Promise<ScanResult> {
       if (inserted) summary.foldersAdded++;
     }
 
-    // Batch upsert all media files
     const batchItems: BatchUpsertItem[] = [];
     for (const relativePath of validFiles) {
       const absolutePath = path.join(mediaRoot, relativePath);
-      const folderPath = path.dirname(relativePath) === "." ? "" : (path.dirname(relativePath) || "");
+      const folderPath =
+        path.dirname(relativePath) === "." ? "" : path.dirname(relativePath) || "";
       const folderId = folderIdMap.get(folderPath) ?? null;
       batchItems.push({ relativePath, absolutePath, folderId });
     }
 
-    summary.filesFound = batchItems.length;
-
-    const batchResult = await batchUpsertFiles(db, batchItems);
+    const batchResult = await batchUpsertFiles(
+      db,
+      batchItems,
+      (done, total) => {
+        controller.updateProgress("indexing", done, total, `Probing ${done}/${total}…`);
+      },
+      controller
+    );
     summary.filesAdded = batchResult.added;
     summary.filesUpdated = batchResult.updated;
 
-    // Remove stale entries before marking scan complete
+    await controller.checkpoint();
+    controller.updateProgress("cleanup", 0, 1, "Removing stale entries…", {
+      files_found: summary.filesFound,
+      files_added: summary.filesAdded,
+      files_updated: summary.filesUpdated,
+    });
+
     summary.foldersRemoved = removeStaleFolders(db, validFolders);
     summary.filesRemoved = removeStaleMedia(db, validFiles);
 
-    // Mark scan DB-phase complete and return immediately — thumbnail generation
-    // is CPU/I/O heavy and runs in the background so the HTTP response isn't blocked.
-    db.prepare(
-      `UPDATE scan_jobs SET
-        status = 'completed',
-        completed_at = datetime('now'),
-        files_found = ?, files_added = ?, files_updated = ?, files_removed = ?,
-        thumbnails_generated = 0,
-        blurhashes_generated = 0
-      WHERE id = ?`
-    ).run(
-      summary.filesFound,
-      summary.filesAdded,
-      summary.filesUpdated,
-      summary.filesRemoved,
-      scanJobId
-    );
+    const assetItems = batchResult.needsThumbnailGeneration;
+    if (assetItems.length > 0) {
+      controller.updateProgress(
+        "assets",
+        0,
+        assetItems.length,
+        `Generating thumbnails (0/${assetItems.length})…`,
+        {
+          files_found: summary.filesFound,
+          files_added: summary.filesAdded,
+          files_updated: summary.filesUpdated,
+          files_removed: summary.filesRemoved,
+        }
+      );
 
-    // Background asset generation: fire-and-forget so the scan HTTP handler
-    // returns promptly. The job record is updated when thumbs finish.
-    if (batchResult.needsThumbnailGeneration.length > 0) {
-      const assetItems = batchResult.needsThumbnailGeneration;
-      // Intentionally not awaited — runs after the scan response is sent
-      generateMediaAssets(assetItems)
-        .then(({ thumbnails, blurhashes }) => {
-          db.prepare(
-            `UPDATE scan_jobs SET
-              thumbnails_generated = ?,
-              blurhashes_generated = ?
-            WHERE id = ?`
-          ).run(thumbnails, blurhashes, scanJobId);
-        })
-        .catch((err) => {
-          console.error("Background thumbnail generation failed:", err);
-          db.prepare(
-            `UPDATE scan_jobs SET error_message = ? WHERE id = ?`
-          ).run(
-            `Thumbnail generation failed: ${err instanceof Error ? err.message : String(err)}`,
-            scanJobId
+      const { thumbnails, blurhashes } = await generateMediaAssets(
+        assetItems,
+        (done, total) => {
+          controller.updateProgress(
+            "assets",
+            done,
+            total,
+            `Generating thumbnails (${done}/${total})…`,
+            {
+              thumbnails_generated: done,
+            }
           );
-        });
+        },
+        controller
+      );
+      summary.thumbnailsGenerated = thumbnails;
+      summary.blurhashesGenerated = blurhashes;
     }
 
-    return { success: true, summary };
+    controller.markCompleted({
+      files_found: summary.filesFound,
+      files_added: summary.filesAdded,
+      files_updated: summary.filesUpdated,
+      files_removed: summary.filesRemoved,
+      thumbnails_generated: summary.thumbnailsGenerated,
+      blurhashes_generated: summary.blurhashesGenerated,
+    });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
-    db.prepare(
-      `UPDATE scan_jobs SET 
-        status = 'failed', 
-        completed_at = datetime('now'),
-        error_message = ?
-      WHERE id = ?`
-    ).run(errorMessage, scanJobId);
-
-    return { success: false, summary, error: errorMessage };
+    controller.markFailed(errorMessage);
+  } finally {
+    clearController(scanJobId);
   }
 }
 
 /**
- * Gets recent scan jobs.
+ * Gets recent scan jobs (includes progress columns).
  */
 export function getRecentScanJobs(limit = 10) {
   const db = getDb();
   return db
     .prepare(
-      `SELECT id, folder_path, status, started_at, completed_at, 
-              error_message, files_found, files_added, files_updated, files_removed, created_at
-       FROM scan_jobs 
-       ORDER BY created_at DESC 
+      `SELECT id, folder_path, status, phase, progress_current, progress_total, progress_message,
+              started_at, completed_at, error_message,
+              files_found, files_added, files_updated, files_removed,
+              thumbnails_generated, blurhashes_generated, created_at
+       FROM scan_jobs
+       ORDER BY created_at DESC
        LIMIT ?`
     )
     .all(limit);
