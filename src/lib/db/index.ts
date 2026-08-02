@@ -77,6 +77,10 @@ function initializeSchema(database: Database.Database): void {
       files_removed INTEGER DEFAULT 0,
       thumbnails_generated INTEGER DEFAULT 0,
       blurhashes_generated INTEGER DEFAULT 0,
+      phase TEXT,
+      progress_current INTEGER DEFAULT 0,
+      progress_total INTEGER DEFAULT 0,
+      progress_message TEXT,
       created_at TEXT DEFAULT (datetime('now'))
     );
 
@@ -120,6 +124,24 @@ function runMigrations(database: Database.Database): void {
   }
   if (!scanJobsColumns.find(c => c.name === "blurhashes_generated")) {
     database.exec("ALTER TABLE scan_jobs ADD COLUMN blurhashes_generated INTEGER DEFAULT 0");
+  }
+
+  // Migration 3: Progress fields for live scan status / pause-resume
+  // Re-read columns in case migration 2 just altered the table.
+  const scanJobsColumnsAfter = database.prepare("PRAGMA table_info(scan_jobs)").all() as {
+    name: string;
+  }[];
+  if (!scanJobsColumnsAfter.find((c) => c.name === "phase")) {
+    database.exec("ALTER TABLE scan_jobs ADD COLUMN phase TEXT");
+  }
+  if (!scanJobsColumnsAfter.find((c) => c.name === "progress_current")) {
+    database.exec("ALTER TABLE scan_jobs ADD COLUMN progress_current INTEGER DEFAULT 0");
+  }
+  if (!scanJobsColumnsAfter.find((c) => c.name === "progress_total")) {
+    database.exec("ALTER TABLE scan_jobs ADD COLUMN progress_total INTEGER DEFAULT 0");
+  }
+  if (!scanJobsColumnsAfter.find((c) => c.name === "progress_message")) {
+    database.exec("ALTER TABLE scan_jobs ADD COLUMN progress_message TEXT");
   }
 }
 
