@@ -16,7 +16,9 @@ import {
 } from "./pathing";
 import {
   generateThumbnail,
+  generateMotionThumbnail,
   generateBlurhashForMedia,
+  supportsMotionPreview,
 } from "./thumbnails";
 
 export interface ScanSummary {
@@ -403,9 +405,27 @@ async function generateMediaAssets(
       await Promise.all(
         batch.map(async (item) => {
           try {
-            // Generate both small and large thumbnails
-            const smallThumb = await generateThumbnail(item.mediaId, item.relativePath, item.mediaType, "small");
-            const largeThumb = await generateThumbnail(item.mediaId, item.relativePath, item.mediaType, "large");
+            // Static thumbs first (grid first paint), then optional motion preview
+            const smallThumb = await generateThumbnail(
+              item.mediaId,
+              item.relativePath,
+              item.mediaType,
+              "small"
+            );
+            const largeThumb = await generateThumbnail(
+              item.mediaId,
+              item.relativePath,
+              item.mediaType,
+              "large"
+            );
+
+            if (supportsMotionPreview(item.mediaType)) {
+              await generateMotionThumbnail(
+                item.mediaId,
+                item.relativePath,
+                item.mediaType
+              );
+            }
 
             if (smallThumb || largeThumb) {
               thumbnailsGenerated++;

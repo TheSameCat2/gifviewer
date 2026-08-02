@@ -1,6 +1,10 @@
 /**
  * Server-side thumbnail generation for media files.
  * Thumbnails are cached in THUMB_ROOT based on media ID.
+ *
+ * Variants:
+ * - static: first-frame WebP (small/large) — used for grid first paint
+ * - motion: short animated WebP preview — loaded on demand (hover / near-viewport)
  */
 import fs from "fs";
 import path from "path";
@@ -13,45 +17,70 @@ import { blurhashToDataUrl } from "./blurhash";
 
 const execFileAsync = promisify(execFile);
 
+export type ThumbSize = "small" | "large";
+export type ThumbVariant = "static" | "motion";
+
 const THUMB_SIZE = 512;
 const THUMB_SIZE_SMALL = 160;
 const THUMB_QUALITY = 80;
 const THUMB_QUALITY_SMALL = 70;
 
+/** Motion previews stay small + short so the grid never downloads full GIFs. */
+const MOTION_SIZE = 160;
+const MOTION_QUALITY = 55;
+const MOTION_MAX_PAGES = 24;
+/** Video motion clip: start offset, duration (seconds), fps. */
+const MOTION_VIDEO_SS = "0.3";
+const MOTION_VIDEO_DURATION = "2.0";
+const MOTION_VIDEO_FPS = "8";
+
 // In-memory cache for thumbnail generation failures (5 minute cooldown)
 const THUMB_FAIL_COOLDOWN_MS = 5 * 60 * 1000;
-const thumbFailureCache = new Map<number, number>();
+const thumbFailureCache = new Map<string, number>();
 
-/**
- * Checks if thumbnail generation recently failed for this media ID.
- * Returns true if we should skip generation attempts for the cooldown period.
- */
-function hasRecentThumbFailure(mediaId: number): boolean {
-  const lastFailure = thumbFailureCache.get(mediaId);
+function failureKey(mediaId: number, variant: ThumbVariant, size: ThumbSize): string {
+  return `${mediaId}:${variant}:${size}`;
+}
+
+function hasRecentThumbFailure(
+  mediaId: number,
+  variant: ThumbVariant = "static",
+  size: ThumbSize = "large"
+): boolean {
+  const key = failureKey(mediaId, variant, size);
+  const lastFailure = thumbFailureCache.get(key);
   if (lastFailure === undefined) return false;
   if (Date.now() - lastFailure > THUMB_FAIL_COOLDOWN_MS) {
-    thumbFailureCache.delete(mediaId);
+    thumbFailureCache.delete(key);
     return false;
   }
   return true;
 }
 
-/**
- * Records a thumbnail generation failure for cooldown tracking.
- */
-function recordThumbFailure(mediaId: number): void {
-  thumbFailureCache.set(mediaId, Date.now());
+function recordThumbFailure(
+  mediaId: number,
+  variant: ThumbVariant = "static",
+  size: ThumbSize = "large"
+): void {
+  thumbFailureCache.set(failureKey(mediaId, variant, size), Date.now());
 }
 
 /**
- * Gets the thumbnail cache path for a given media ID, type, and size.
+ * Gets the thumbnail cache path for a given media ID, type, size, and variant.
  */
-export function getThumbCachePath(mediaId: number, mediaType: string, size: "small" | "large" = "large"): string {
+export function getThumbCachePath(
+  mediaId: number,
+  mediaType: string,
+  size: ThumbSize = "large",
+  variant: ThumbVariant = "static"
+): string {
   const { thumbRoot } = getConfig();
-  // Always use WebP for thumbnails — smaller and faster than GIF
-  const ext = ".webp";
+  void mediaType;
+  if (variant === "motion") {
+    return path.join(thumbRoot, `thumb_${mediaId}_anim.webp`);
+  }
   const sizeSuffix = size === "small" ? "_sm" : "";
-  return path.join(thumbRoot, `thumb_${mediaId}${sizeSuffix}${ext}`);
+  return path.join(thumbRoot, `thumb_${mediaId}${sizeSuffix}.webp`);
 }
 
 /**
@@ -61,9 +90,10 @@ export async function isThumbFresh(
   mediaId: number,
   sourceMtime: Date,
   mediaType: string,
-  size: "small" | "large" = "large"
+  size: ThumbSize = "large",
+  variant: ThumbVariant = "static"
 ): Promise<boolean> {
-  const thumbPath = getThumbCachePath(mediaId, mediaType, size);
+  const thumbPath = getThumbCachePath(mediaId, mediaType, size, variant);
   try {
     const thumbStat = await fs.promises.stat(thumbPath);
     return thumbStat.mtime >= sourceMtime;
@@ -73,10 +103,10 @@ export async function isThumbFresh(
 }
 
 /**
- * Generates a thumbnail for an image (jpg, png, webp, avif, gif).
- * For GIF sources, only the first frame is decoded to avoid expensive full-animation processing.
+ * Generates a static thumbnail for an image (jpg, png, webp, avif, gif).
+ * For GIF sources, only the first frame is decoded.
  */
-async function generateImageThumb(
+async function generateStaticImageThumb(
   srcPath: string,
   destPath: string,
   size: number,
@@ -84,7 +114,7 @@ async function generateImageThumb(
   isAnimated: boolean = false
 ): Promise<void> {
   const pipeline = isAnimated
-    ? sharp(srcPath, { animated: true })
+    ? sharp(srcPath, { animated: true, pages: 1 })
     : sharp(srcPath);
   await pipeline
     .resize(size, size, {
@@ -96,15 +126,70 @@ async function generateImageThumb(
 }
 
 /**
- * Generates a thumbnail for a webm video using ffmpeg.
- * Falls back to creating a poster frame.
+ * Generates a short animated WebP preview from a GIF (capped frame count + size).
+ * Sharp rejects `pages` greater than the source frame count, so we clamp first.
+ */
+async function generateMotionGifThumb(srcPath: string, destPath: string): Promise<void> {
+  const meta = await sharp(srcPath, { animated: true, pages: -1 }).metadata();
+  const totalPages = Math.max(1, meta.pages ?? 1);
+  const pages = Math.min(MOTION_MAX_PAGES, totalPages);
+
+  await sharp(srcPath, {
+    animated: true,
+    pages,
+    limitInputPixels: false,
+  })
+    .resize(MOTION_SIZE, MOTION_SIZE, {
+      fit: "inside",
+      withoutEnlargement: true,
+    })
+    .webp({
+      quality: MOTION_QUALITY,
+      effort: 4,
+    })
+    .toFile(destPath);
+}
+
+/**
+ * Generates a short looping animated WebP from a video via ffmpeg.
+ */
+async function generateMotionVideoThumb(srcPath: string, destPath: string): Promise<boolean> {
+  try {
+    await execFileAsync("ffmpeg", [
+      "-y",
+      "-ss",
+      MOTION_VIDEO_SS,
+      "-t",
+      MOTION_VIDEO_DURATION,
+      "-i",
+      srcPath,
+      "-an",
+      "-vf",
+      `fps=${MOTION_VIDEO_FPS},scale=${MOTION_SIZE}:${MOTION_SIZE}:force_original_aspect_ratio=decrease:flags=lanczos`,
+      "-loop",
+      "0",
+      "-c:v",
+      "libwebp",
+      "-quality",
+      String(MOTION_QUALITY),
+      "-compression_level",
+      "4",
+      destPath,
+    ]);
+    return fs.existsSync(destPath);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Generates a thumbnail for a webm video using ffmpeg (static poster frame).
  */
 async function generateVideoThumb(
   srcPath: string,
   destPath: string,
   size: number
 ): Promise<boolean> {
-  // Try to extract a frame from the video
   try {
     await execFileAsync("ffmpeg", [
       "-y",
@@ -128,18 +213,20 @@ async function generateVideoThumb(
   }
 }
 
+export function supportsMotionPreview(mediaType: string): boolean {
+  return mediaType === "animated" || mediaType === "video";
+}
+
 /**
- * Generates a thumbnail for a media file by ID.
- * Returns the path to the generated thumbnail.
+ * Generates a static thumbnail for a media file by ID.
  */
 export async function generateThumbnail(
   mediaId: number,
   relativePath: string,
   mediaType: string,
-  size: "small" | "large" = "large"
+  size: ThumbSize = "large"
 ): Promise<string | null> {
-  // Skip if we've recently failed to generate a thumbnail for this media
-  if (hasRecentThumbFailure(mediaId)) {
+  if (hasRecentThumbFailure(mediaId, "static", size)) {
     return null;
   }
 
@@ -148,9 +235,8 @@ export async function generateThumbnail(
 
   const thumbSize = size === "small" ? THUMB_SIZE_SMALL : THUMB_SIZE;
   const thumbQuality = size === "small" ? THUMB_QUALITY_SMALL : THUMB_QUALITY;
-  const destPath = getThumbCachePath(mediaId, mediaType, size);
+  const destPath = getThumbCachePath(mediaId, mediaType, size, "static");
 
-  // Ensure thumbnail dir exists
   const { thumbRoot } = getConfig();
   if (!fs.existsSync(thumbRoot)) {
     fs.mkdirSync(thumbRoot, { recursive: true });
@@ -158,47 +244,90 @@ export async function generateThumbnail(
 
   try {
     if (mediaType === "animated") {
-      await generateImageThumb(srcPath, destPath, thumbSize, thumbQuality, true);
+      await generateStaticImageThumb(srcPath, destPath, thumbSize, thumbQuality, true);
     } else if (mediaType === "video") {
-      // For video, try to generate a frame thumbnail
       const success = await generateVideoThumb(srcPath, destPath, thumbSize);
       if (!success) {
-        // Record failure to avoid repeated attempts
-        recordThumbFailure(mediaId);
-        // Return null - the route will fall back to streaming original
+        recordThumbFailure(mediaId, "static", size);
         return null;
       }
     } else {
-      await generateImageThumb(srcPath, destPath, thumbSize, thumbQuality);
+      await generateStaticImageThumb(srcPath, destPath, thumbSize, thumbQuality);
     }
     return destPath;
   } catch (err) {
     console.error(`Failed to generate thumbnail for media ${mediaId}:`, err);
-    recordThumbFailure(mediaId);
+    recordThumbFailure(mediaId, "static", size);
+    return null;
+  }
+}
+
+/**
+ * Generates a short motion preview WebP for animated/video media.
+ */
+export async function generateMotionThumbnail(
+  mediaId: number,
+  relativePath: string,
+  mediaType: string
+): Promise<string | null> {
+  if (!supportsMotionPreview(mediaType)) {
+    return null;
+  }
+  if (hasRecentThumbFailure(mediaId, "motion", "small")) {
+    return null;
+  }
+
+  const srcPath = resolveMediaPath(relativePath);
+  if (!srcPath) return null;
+
+  const destPath = getThumbCachePath(mediaId, mediaType, "small", "motion");
+  const { thumbRoot } = getConfig();
+  if (!fs.existsSync(thumbRoot)) {
+    fs.mkdirSync(thumbRoot, { recursive: true });
+  }
+
+  try {
+    if (mediaType === "animated") {
+      await generateMotionGifThumb(srcPath, destPath);
+      return destPath;
+    }
+    if (mediaType === "video") {
+      const ok = await generateMotionVideoThumb(srcPath, destPath);
+      if (!ok) {
+        recordThumbFailure(mediaId, "motion", "small");
+        return null;
+      }
+      return destPath;
+    }
+    return null;
+  } catch (err) {
+    console.error(`Failed to generate motion thumb for media ${mediaId}:`, err);
+    recordThumbFailure(mediaId, "motion", "small");
     return null;
   }
 }
 
 /**
  * Ensures a thumbnail exists, generating it if necessary.
- * Returns the thumbnail path.
  */
 export async function ensureThumbnail(
   mediaId: number,
   relativePath: string,
   mediaType: string,
   sourceMtime: Date,
-  size: "small" | "large" = "large"
+  size: ThumbSize = "large",
+  variant: ThumbVariant = "static"
 ): Promise<string | null> {
-  const thumbPath = getThumbCachePath(mediaId, mediaType, size);
+  const thumbPath = getThumbCachePath(mediaId, mediaType, size, variant);
 
-  // Check if thumbnail is fresh
-  const isFresh = await isThumbFresh(mediaId, sourceMtime, mediaType, size);
+  const isFresh = await isThumbFresh(mediaId, sourceMtime, mediaType, size, variant);
   if (isFresh && fs.existsSync(thumbPath)) {
     return thumbPath;
   }
 
-  // Generate thumbnail
+  if (variant === "motion") {
+    return generateMotionThumbnail(mediaId, relativePath, mediaType);
+  }
   return generateThumbnail(mediaId, relativePath, mediaType, size);
 }
 
@@ -210,7 +339,6 @@ async function generateBlurhash(srcPath: string, mediaType: string): Promise<str
     let pipeline: sharp.Sharp;
 
     if (mediaType === "video") {
-      // Extract first frame from video
       const { stdout } = await execFileAsync("ffmpeg", [
         "-y",
         "-i",
@@ -225,25 +353,21 @@ async function generateBlurhash(srcPath: string, mediaType: string): Promise<str
       ]);
       pipeline = sharp(Buffer.from(stdout), { animated: false });
     } else if (mediaType === "animated") {
-      // Only decode the first frame of a GIF, avoiding a full buffer read into memory
       pipeline = sharp(srcPath, { animated: true, pages: 1 });
     } else {
       pipeline = sharp(srcPath);
     }
 
-    // Resize to small for blurhash calculation
     const { data, info } = await pipeline
       .resize(32, 32, { fit: "inside" })
       .ensureAlpha()
       .raw()
       .toBuffer({ resolveWithObject: true });
 
-    // Generate simple blurhash: sample 4x3 components (DCT-based approximation)
     const width = info.width;
     const height = info.height;
     const pixels = new Uint8ClampedArray(data);
 
-    // 4 components wide, 3 height (12 total - 36 values for RGB)
     const componentsX = 4;
     const componentsY = 3;
 
@@ -251,12 +375,15 @@ async function generateBlurhash(srcPath: string, mediaType: string): Promise<str
 
     for (let cy = 0; cy < componentsY; cy++) {
       for (let cx = 0; cx < componentsX; cx++) {
-        let r = 0, g = 0, b = 0, count = 0;
+        let r = 0,
+          g = 0,
+          b = 0,
+          count = 0;
 
         for (let y = 0; y < height; y++) {
           for (let x = 0; x < width; x++) {
-            // Basis function for this component (DCT basis)
-            const basis = Math.cos((Math.PI * cx * x) / width) * Math.cos((Math.PI * cy * y) / height);
+            const basis =
+              Math.cos((Math.PI * cx * x) / width) * Math.cos((Math.PI * cy * y) / height);
             const idx = (y * width + x) * 4;
             r += pixels[idx] * basis;
             g += pixels[idx + 1] * basis;
@@ -275,8 +402,7 @@ async function generateBlurhash(srcPath: string, mediaType: string): Promise<str
       }
     }
 
-    // Encode as compact string: width,height,data where data is hex-encoded RGB values
-    const encoded = values.map(v => v.toString(16).padStart(2, "0")).join("");
+    const encoded = values.map((v) => v.toString(16).padStart(2, "0")).join("");
     return `${componentsX},${componentsY},${encoded}`;
   } catch (err) {
     console.warn(`Failed to generate blurhash for ${srcPath}:`, err);

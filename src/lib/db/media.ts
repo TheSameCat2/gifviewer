@@ -301,6 +301,7 @@ export function deleteMedia(mediaId: number): MediaRow | null {
   const thumbNames = [
     `thumb_${mediaId}.webp`,
     `thumb_${mediaId}_sm.webp`,
+    `thumb_${mediaId}_anim.webp`,
     `thumb_${mediaId}.gif`,
     `thumb_${mediaId}_sm.gif`,
     `${mediaId}.jpg`,
