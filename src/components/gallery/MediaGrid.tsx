@@ -1,14 +1,12 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import Link from "next/link";
-import Image from "next/image";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { MediaGridItem } from "@/lib/db/media";
 import { ClipboardPasteIcon, UploadIcon } from "lucide-react";
 import { ContextMenu, ContextMenuEntry } from "./ContextMenu";
+import { MediaThumbCell } from "./MediaThumbCell";
 import { Button } from "@/components/ui/button";
-import { blurhashToDataUrl } from "@/lib/media/blurhash";
 import { useWindowVirtualizer } from "@tanstack/react-virtual";
 
 interface MediaGridProps {
@@ -45,50 +43,6 @@ function documentTop(el: HTMLElement): number {
 interface ClipboardState {
   mediaId: number;
   operation: "copy" | "cut";
-}
-
-/**
- * Renders a blurhash as a background placeholder
- */
-function BlurhashPlaceholder({ 
-  hash, 
-  width = 32, 
-  height = 32,
-  style 
-}: { 
-  hash: string; 
-  width?: number; 
-  height?: number;
-  style?: React.CSSProperties;
-}) {
-  const dataUrl = useMemo(() => {
-    try {
-      return blurhashToDataUrl(hash, width, height);
-    } catch {
-      return null;
-    }
-  }, [hash, width, height]);
-
-  if (!dataUrl) {
-    return (
-      <div 
-        className="absolute inset-0 animate-pulse bg-muted" 
-        style={style}
-      />
-    );
-  }
-
-  return (
-    <div 
-      className="absolute inset-0" 
-      style={{ 
-        backgroundImage: `url(${dataUrl})`,
-        backgroundSize: 'cover',
-        backgroundPosition: 'center',
-        ...style 
-      }} 
-    />
-  );
 }
 
 export function MediaGrid({
@@ -470,59 +424,31 @@ export function MediaGrid({
         <div ref={containerRef} className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
           {items.map((item) => {
             const href = buildHref(item.id);
-            const thumbSrc = `/api/thumbs/${item.id}?size=small`;
             const isCutSource = clipboard?.operation === "cut" && clipboard?.mediaId === item.id;
 
             return (
-              <div
+              <MediaThumbCell
                 key={item.id}
-                data-media-id={item.id}
-                className={`group relative flex aspect-square items-center justify-center overflow-hidden rounded-xl bg-muted ${
-                  isCutSource ? "ring-2 ring-amber-400 opacity-60" : ""
-                }`}
+                id={item.id}
+                filename={item.filename}
+                mimeType={item.mime_type}
+                blurhash={item.thumb_blurhash}
+                href={href}
+                isCutSource={isCutSource}
                 onContextMenu={(e) => {
                   e.preventDefault();
                   setCtxMenu({ x: e.clientX, y: e.clientY, item });
                 }}
-              >
-                <Link
-                  href={href}
-                  scroll={false}
-                  onClick={() => {
-                    sessionStorage.setItem(
-                      "mediaGridScroll",
-                      JSON.stringify({
-                        scrollY: window.scrollY,
-                        mediaId: item.id,
-                      })
-                    );
-                  }}
-                  className="absolute inset-0"
-                >
-                  {/* Blurhash placeholder */}
-                  {item.thumb_blurhash && (
-                    <BlurhashPlaceholder hash={item.thumb_blurhash} />
-                  )}
-                  {/* Thumbnail image with zero-React-render load transition */}
-                  <Image
-                    src={thumbSrc}
-                    alt={item.filename}
-                    fill
-                    unoptimized
-                    sizes="(min-width: 1280px) 16vw, (min-width: 1024px) 20vw, (min-width: 768px) 25vw, 50vw"
-                    className="object-cover opacity-0 transition-opacity duration-300"
-                    onLoad={(e) => {
-                      const el = e.currentTarget as HTMLElement;
-                      el.classList.remove("opacity-0");
-                      el.classList.add("opacity-100");
-                    }}
-                  />
-                  {/* Overlay with filename */}
-                  <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/60 to-transparent px-2 py-2 opacity-0 transition-opacity group-hover:opacity-100">
-                    <p className="truncate text-xs text-white">{item.filename}</p>
-                  </div>
-                </Link>
-              </div>
+                onNavigate={() => {
+                  sessionStorage.setItem(
+                    "mediaGridScroll",
+                    JSON.stringify({
+                      scrollY: window.scrollY,
+                      mediaId: item.id,
+                    })
+                  );
+                }}
+              />
             );
           })}
         </div>
@@ -553,66 +479,39 @@ export function MediaGrid({
                   }}
                 >
                   <div
-                    className="grid w-full h-full gap-3"
+                    className="grid h-full w-full gap-3"
                     style={{
                       gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
                     }}
                   >
                     {rowItems.map((item) => {
                       const href = buildHref(item.id);
-                      const thumbSrc = `/api/thumbs/${item.id}?size=small`;
-                      const isCutSource = clipboard?.operation === "cut" && clipboard?.mediaId === item.id;
+                      const isCutSource =
+                        clipboard?.operation === "cut" && clipboard?.mediaId === item.id;
 
                       return (
-                        <div
+                        <MediaThumbCell
                           key={item.id}
-                          data-media-id={item.id}
-                          className={`group relative flex aspect-square items-center justify-center overflow-hidden rounded-xl bg-muted ${
-                            isCutSource ? "ring-2 ring-amber-400 opacity-60" : ""
-                          }`}
+                          id={item.id}
+                          filename={item.filename}
+                          mimeType={item.mime_type}
+                          blurhash={item.thumb_blurhash}
+                          href={href}
+                          isCutSource={isCutSource}
                           onContextMenu={(e) => {
                             e.preventDefault();
                             setCtxMenu({ x: e.clientX, y: e.clientY, item });
                           }}
-                        >
-                          <Link
-                            href={href}
-                            scroll={false}
-                            onClick={() => {
-                              sessionStorage.setItem(
-                                "mediaGridScroll",
-                                JSON.stringify({
-                                  scrollY: window.scrollY,
-                                  mediaId: item.id,
-                                })
-                              );
-                            }}
-                            className="absolute inset-0"
-                          >
-                            {/* Blurhash placeholder */}
-                            {item.thumb_blurhash && (
-                              <BlurhashPlaceholder hash={item.thumb_blurhash} />
-                            )}
-                            {/* Thumbnail image with zero-React-render load transition */}
-                            <Image
-                              src={thumbSrc}
-                              alt={item.filename}
-                              fill
-                              unoptimized
-                              sizes="(min-width: 1280px) 16vw, (min-width: 1024px) 20vw, (min-width: 768px) 25vw, 50vw"
-                              className="object-cover opacity-0 transition-opacity duration-300"
-                              onLoad={(e) => {
-                                const el = e.currentTarget as HTMLElement;
-                                el.classList.remove("opacity-0");
-                                el.classList.add("opacity-100");
-                              }}
-                            />
-                            {/* Overlay with filename */}
-                            <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/60 to-transparent px-2 py-2 opacity-0 transition-opacity group-hover:opacity-100">
-                              <p className="truncate text-xs text-white">{item.filename}</p>
-                            </div>
-                          </Link>
-                        </div>
+                          onNavigate={() => {
+                            sessionStorage.setItem(
+                              "mediaGridScroll",
+                              JSON.stringify({
+                                scrollY: window.scrollY,
+                                mediaId: item.id,
+                              })
+                            );
+                          }}
+                        />
                       );
                     })}
                   </div>

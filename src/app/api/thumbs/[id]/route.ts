@@ -1,5 +1,5 @@
 import { stat } from "node:fs/promises";
-import { createReadStream } from "node:fs";
+import { createReadStream, existsSync } from "node:fs";
 import { Readable } from "node:stream";
 import path from "path";
 import { NextResponse } from "next/server";
@@ -9,6 +9,10 @@ import {
   isThumbFresh,
   getThumbCachePath,
   generateThumbnail,
+  generateMotionThumbnail,
+  supportsMotionPreview,
+  type ThumbSize,
+  type ThumbVariant,
 } from "@/lib/media/thumbnails";
 
 function thumbContentType(p: string): string {
@@ -29,9 +33,10 @@ export async function GET(
 ) {
   const { id } = await context.params;
 
-  // Check for size parameter (small or large, default large)
   const url = new URL(request.url);
-  const size = url.searchParams.get("size") === "small" ? "small" : "large";
+  const size: ThumbSize = url.searchParams.get("size") === "small" ? "small" : "large";
+  const variantParam = url.searchParams.get("variant");
+  const variant: ThumbVariant = variantParam === "motion" ? "motion" : "static";
 
   const parsedId = Number(id);
   if (!Number.isInteger(parsedId) || parsedId <= 0) {
@@ -61,10 +66,62 @@ export async function GET(
 
   const mediaType = row.media_type ?? "image";
 
-  // Check if a fresh thumbnail already exists
-  const isFresh = await isThumbFresh(parsedId, sourceStat.mtime, mediaType, size);
+  // Motion previews are opt-in and must never fall back to streaming the original
+  // (that would thrash the grid with full GIF/video downloads).
+  if (variant === "motion") {
+    if (!supportsMotionPreview(mediaType)) {
+      return new NextResponse("Motion preview not supported", { status: 404 });
+    }
+
+    const isFresh = await isThumbFresh(
+      parsedId,
+      sourceStat.mtime,
+      mediaType,
+      "small",
+      "motion"
+    );
+    const thumbPath = getThumbCachePath(parsedId, mediaType, "small", "motion");
+
+    if (isFresh && existsSync(thumbPath)) {
+      try {
+        const thumbStat = await stat(thumbPath);
+        if (thumbStat.isFile()) {
+          const stream = Readable.toWeb(createReadStream(thumbPath));
+          return new Response(stream as unknown as ReadableStream, {
+            headers: {
+              "Content-Type": thumbContentType(thumbPath),
+              "Content-Length": thumbStat.size.toString(),
+              "Cache-Control": "public, max-age=86400",
+            },
+          });
+        }
+      } catch {
+        // fall through to background generate
+      }
+    }
+
+    const flightKey = `${parsedId}:motion`;
+    if (!inFlightThumbs.has(flightKey)) {
+      const promise = (async () => {
+        try {
+          await generateMotionThumbnail(parsedId, row.relative_path, mediaType);
+        } catch (err) {
+          console.warn(`Background motion thumb failed for ${flightKey}:`, err);
+        } finally {
+          inFlightThumbs.delete(flightKey);
+        }
+      })();
+      inFlightThumbs.set(flightKey, promise);
+    }
+
+    // Client keeps showing the static thumb until motion is ready.
+    return new NextResponse("Motion preview generating", { status: 404 });
+  }
+
+  // Static path — stream original while generating if missing (existing behavior)
+  const isFresh = await isThumbFresh(parsedId, sourceStat.mtime, mediaType, size, "static");
   if (isFresh) {
-    const thumbPath = getThumbCachePath(parsedId, mediaType, size);
+    const thumbPath = getThumbCachePath(parsedId, mediaType, size, "static");
     let thumbStat;
     try {
       thumbStat = await stat(thumbPath);
@@ -83,11 +140,9 @@ export async function GET(
     }
   }
 
-  // Stream the original immediately so the browser never waits on generation
   const stream = Readable.toWeb(createReadStream(filePath));
 
-  // Kick off background thumbnail generation if not already in flight
-  const flightKey = `${parsedId}:${size}`;
+  const flightKey = `${parsedId}:static:${size}`;
   if (!inFlightThumbs.has(flightKey)) {
     const promise = (async () => {
       try {

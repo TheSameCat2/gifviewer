@@ -68,10 +68,10 @@ export default function SettingsPage() {
           <section className="rounded-xl border bg-card/80 p-6 shadow-sm backdrop-blur-sm">
             <h2 className="mb-4 font-heading text-lg font-semibold">Thumbnail Cache</h2>
             <p className="mb-6 text-sm text-muted-foreground">
-              Thumbnails are generated automatically when media is first viewed. Clearing
-              the cache deletes all existing thumbnails and queues them for regeneration
-              in the background. Existing media will still display using the original files
-              while thumbnails rebuild.
+              Static and short motion-preview WebPs are generated during scan (and on
+              demand). Clearing the cache deletes all cached thumbs — including motion
+              previews — and queues regeneration in the background. The grid keeps using
+              static placeholders until rebuild finishes.
             </p>
 
             <Button
