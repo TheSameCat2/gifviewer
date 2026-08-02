@@ -1,6 +1,9 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { motion } from "motion/react";
+import { Separator } from "@/components/ui/separator";
+import { cn } from "@/lib/utils";
 
 export interface ContextMenuItem {
   label: string;
@@ -27,7 +30,6 @@ interface ContextMenuProps {
 export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
   const ref = useRef<HTMLDivElement>(null);
 
-  // Adjust position after mount using a timeout to allow initial render
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
@@ -49,16 +51,13 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
       }
     };
 
-    // Initial adjustment
     adjustPosition();
 
-    // Also adjust on window resize
     const handleResize = () => adjustPosition();
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);
   }, [x, y]);
 
-  // Close on click outside or Escape
   useEffect(() => {
     const handleClick = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) {
@@ -68,7 +67,6 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
     const handleKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
-    // Delay listener so the right-click that opened the menu doesn't immediately close it
     const timer = setTimeout(() => {
       document.addEventListener("mousedown", handleClick);
       document.addEventListener("keydown", handleKey);
@@ -81,19 +79,23 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
   }, [onClose]);
 
   return (
-    <div
+    <motion.div
       ref={ref}
-      className="fixed z-[100] min-w-[160px] rounded-lg border border-zinc-200 bg-white py-1 shadow-xl dark:border-zinc-700 dark:bg-zinc-800"
+      initial={{ opacity: 0, scale: 0.96 }}
+      animate={{ opacity: 1, scale: 1 }}
+      transition={{ duration: 0.12, ease: "easeOut" }}
+      className="fixed z-[100] min-w-[168px] rounded-xl border bg-popover py-1 text-popover-foreground shadow-lg ring-1 ring-foreground/10"
       style={{ left: x, top: y }}
     >
       {items.map((item, i) => {
         if ("separator" in item && item.separator) {
-          return <hr key={`sep-${i}`} className="my-1 border-zinc-200 dark:border-zinc-700" />;
+          return <Separator key={`sep-${i}`} className="my-1" />;
         }
         const entry = item as ContextMenuItem;
         return (
           <button
             key={i}
+            type="button"
             onClick={() => {
               if (!entry.disabled) {
                 entry.action();
@@ -101,17 +103,19 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
               }
             }}
             disabled={entry.disabled}
-            className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm transition-colors ${
+            className={cn(
+              "flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm transition-colors",
               entry.danger
-                ? "text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/30"
-                : "text-zinc-700 hover:bg-zinc-100 dark:text-zinc-200 dark:hover:bg-zinc-700"
-            } ${entry.disabled ? "cursor-not-allowed opacity-40" : ""}`}
+                ? "text-destructive hover:bg-destructive/10"
+                : "hover:bg-muted",
+              entry.disabled && "cursor-not-allowed opacity-40"
+            )}
           >
-            {entry.icon && <span className="w-4 text-center">{entry.icon}</span>}
+            {entry.icon && <span className="w-4 text-center text-xs">{entry.icon}</span>}
             <span>{entry.label}</span>
           </button>
         );
       })}
-    </div>
+    </motion.div>
   );
 }

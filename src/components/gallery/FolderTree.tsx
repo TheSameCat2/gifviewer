@@ -91,7 +91,7 @@ const FolderItem = memo(function FolderItem({ node, depth, selectedId }: { node:
       <div className="flex items-center">
         {depth > 0 && (
           <span
-            className="mr-1 text-zinc-400"
+            className="mr-1 text-muted-foreground/60"
             style={{ paddingLeft: `${(depth - 1) * 1}rem` }}
           >
             └
@@ -100,15 +100,15 @@ const FolderItem = memo(function FolderItem({ node, depth, selectedId }: { node:
         <Link
           href={href}
           className={[
-            "flex-1 rounded px-2 py-1 text-sm transition",
+            "flex-1 rounded-md px-2 py-1 text-sm transition-colors",
             isSelected
-              ? "bg-blue-100 font-medium text-blue-700 dark:bg-blue-900 dark:text-blue-300"
-              : "text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800",
+              ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
+              : "text-sidebar-foreground/90 hover:bg-sidebar-accent/70",
           ]
             .filter(Boolean)
             .join(" ")}
         >
-          {node.name || <span className="italic text-zinc-400">Root</span>}
+          {node.name || <span className="italic text-muted-foreground">Root</span>}
         </Link>
       </div>
       {node.children.length > 0 && (
@@ -138,7 +138,7 @@ export function FolderTree({ selectedId }: FolderTreeProps) {
 
   return (
     <nav className="text-sm">
-      <p className="mb-1 px-2 text-xs font-semibold uppercase tracking-wider text-zinc-400">
+      <p className="mb-1 px-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
         Folders
       </p>
       <ul className="list-none pl-0">
@@ -147,16 +147,16 @@ export function FolderTree({ selectedId }: FolderTreeProps) {
           <Link
             href="/"
             className={[
-              "flex items-center rounded px-2 py-1 text-sm transition",
+              "flex items-center rounded-md px-2 py-1 text-sm transition-colors",
               rootSelected
-                ? "bg-blue-100 font-medium text-blue-700 dark:bg-blue-900 dark:text-blue-300"
-                : "text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800",
+                ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
+                : "text-sidebar-foreground/90 hover:bg-sidebar-accent/70",
             ]
               .filter(Boolean)
               .join(" ")}
           >
-            <span className="mr-1 text-zinc-400">└</span>
-            <span className="italic text-zinc-500">/ (library root)</span>
+            <span className="mr-1 text-muted-foreground/60">└</span>
+            <span className="italic text-muted-foreground">/ (library root)</span>
           </Link>
         </li>
         {/* Root folder's children as top-level entries if root exists, otherwise roots as top-level */}

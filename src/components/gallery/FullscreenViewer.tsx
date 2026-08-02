@@ -4,7 +4,16 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
+import { motion } from "motion/react";
+import {
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  StarIcon,
+  XIcon,
+} from "lucide-react";
 import { MediaRow, TagRow } from "@/lib/db/media";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 
 interface FolderOption {
   id: number;
@@ -288,40 +297,57 @@ export function FullscreenViewer({
   }, [item.folder_id, router]);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90">
+    <motion.div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/90"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.18 }}
+    >
       {/* Close button */}
-      <Link
-        href={backHref}
-        scroll={false}
-        className="absolute left-4 top-4 z-10 rounded bg-black/50 px-3 py-2 text-sm text-white hover:bg-black/70"
+      <Button
+        variant="secondary"
+        size="sm"
+        className="absolute left-4 top-4 z-10 bg-black/50 text-white hover:bg-black/70"
+        render={<Link href={backHref} scroll={false} />}
       >
-        ✕ Close
-      </Link>
+        <XIcon data-icon="inline-start" />
+        Close
+      </Button>
 
       {/* Navigation */}
-      <div className="absolute inset-x-0 top-4 flex justify-center gap-4">
+      <div className="absolute inset-x-0 top-4 z-10 flex justify-center gap-2">
         {previousHref !== null && (
-          <Link
-            href={previousHref}
-            scroll={false}
-            className="rounded bg-black/50 px-3 py-2 text-sm text-white hover:bg-black/70"
+          <Button
+            variant="secondary"
+            size="sm"
+            className="bg-black/50 text-white hover:bg-black/70"
+            render={<Link href={previousHref} scroll={false} />}
           >
-            ← Previous
-          </Link>
+            <ChevronLeftIcon data-icon="inline-start" />
+            Previous
+          </Button>
         )}
         {nextHref !== null && (
-          <Link
-            href={nextHref}
-            scroll={false}
-            className="rounded bg-black/50 px-3 py-2 text-sm text-white hover:bg-black/70"
+          <Button
+            variant="secondary"
+            size="sm"
+            className="bg-black/50 text-white hover:bg-black/70"
+            render={<Link href={nextHref} scroll={false} />}
           >
-            Next →
-          </Link>
+            Next
+            <ChevronRightIcon data-icon="inline-end" />
+          </Button>
         )}
       </div>
 
       {/* Media */}
-      <div className="relative h-[85vh] w-[calc(100vw-2rem)] max-w-[calc(100vw-2rem)] p-4">
+      <motion.div
+        key={item.id}
+        className="relative h-[85vh] w-[calc(100vw-2rem)] max-w-[calc(100vw-2rem)] p-4"
+        initial={{ opacity: 0, scale: 0.985 }}
+        animate={{ opacity: 1, scale: 1 }}
+        transition={{ duration: 0.2, ease: "easeOut" }}
+      >
         {isVideo ? (
           <video
             src={mediaSrc}
@@ -342,7 +368,7 @@ export function FullscreenViewer({
             className="object-contain"
           />
         )}
-      </div>
+      </motion.div>
 
       {/* Metadata bar */}
       <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/80 to-transparent px-4 py-4">
@@ -365,16 +391,23 @@ export function FullscreenViewer({
           {[1, 2, 3, 4, 5].map((star) => (
             <button
               key={star}
+              type="button"
               onClick={() => handleRating(star === rating ? 0 : star)}
               disabled={pending}
-              className={`text-lg ${star <= rating ? "text-yellow-400" : "text-zinc-500"} hover:text-yellow-300 disabled:opacity-50`}
+              className={`rounded p-0.5 transition-colors disabled:opacity-50 ${
+                star <= rating ? "text-amber-400" : "text-zinc-500 hover:text-amber-300"
+              }`}
               aria-label={`Rate ${star} star${star !== 1 ? "s" : ""}`}
             >
-              ★
+              <StarIcon
+                className="size-5"
+                fill={star <= rating ? "currentColor" : "none"}
+              />
             </button>
           ))}
           {rating > 0 && (
             <button
+              type="button"
               onClick={() => handleRating(0)}
               disabled={pending}
               className="ml-1 text-xs text-zinc-400 hover:text-zinc-200 disabled:opacity-50"
@@ -387,20 +420,22 @@ export function FullscreenViewer({
         {/* Tags */}
         <div className="mt-2 flex flex-wrap items-center justify-center gap-1">
           {tags.map((tag) => (
-            <span
+            <Badge
               key={tag.id}
-              className="flex items-center gap-1 rounded bg-white/20 px-2 py-0.5 text-xs text-white"
+              variant="secondary"
+              className="gap-1 bg-white/20 pr-1 text-white"
             >
               {tag.name}
               <button
+                type="button"
                 onClick={() => handleRemoveTag(tag.id)}
                 disabled={pending}
-                className="text-zinc-300 hover:text-white disabled:opacity-50"
+                className="rounded-full p-0.5 hover:bg-white/20 disabled:opacity-50"
                 aria-label={`Remove tag ${tag.name}`}
               >
-                ✕
+                <XIcon className="size-3" />
               </button>
-            </span>
+            </Badge>
           ))}
           <div className="flex items-center gap-1">
             <input
@@ -515,6 +550,6 @@ export function FullscreenViewer({
         {error && <p className="mt-1 text-center text-xs text-red-400">{error}</p>}
         {pending && <p className="mt-1 text-center text-xs text-zinc-400">…</p>}
       </div>
-    </div>
+    </motion.div>
   );
 }

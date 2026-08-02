@@ -2,6 +2,10 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { AnimatePresence, motion } from "motion/react";
+import { ArrowLeftIcon, Loader2Icon, Trash2Icon } from "lucide-react";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
 
 export default function SettingsPage() {
   const [status, setStatus] = useState<{
@@ -10,7 +14,11 @@ export default function SettingsPage() {
   }>({ type: "idle" });
 
   const handleClearThumbnails = async () => {
-    if (!window.confirm("This will delete all cached thumbnails and regenerate them in the background. Continue?")) {
+    if (
+      !window.confirm(
+        "This will delete all cached thumbnails and regenerate them in the background. Continue?"
+      )
+    ) {
       return;
     }
 
@@ -39,57 +47,76 @@ export default function SettingsPage() {
   };
 
   return (
-    <div className="min-h-screen flex flex-col bg-zinc-50 dark:bg-zinc-950">
-      {/* Header */}
-      <header className="border-b border-zinc-200 bg-white px-6 py-4 dark:border-zinc-800 dark:bg-zinc-900">
+    <div className="flex min-h-screen flex-col">
+      <header className="border-b bg-card/80 px-6 py-4 backdrop-blur-md">
         <div className="flex items-center justify-between">
-          <h1 className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50">
-            Settings
-          </h1>
-          <Link
-            href="/"
-            className="rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700"
-          >
-            ← Back to Gallery
-          </Link>
+          <h1 className="font-heading text-2xl font-bold tracking-tight">Settings</h1>
+          <Button variant="outline" size="sm" render={<Link href="/" />}>
+            <ArrowLeftIcon data-icon="inline-start" />
+            Back to Gallery
+          </Button>
         </div>
       </header>
 
-      {/* Content */}
       <main className="flex-1 p-6">
-        <div className="mx-auto max-w-2xl">
-          <section className="rounded-lg border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-900">
-            <h2 className="mb-4 text-lg font-semibold text-zinc-900 dark:text-zinc-100">
-              Thumbnail Cache
-            </h2>
-            <p className="mb-6 text-sm text-zinc-500 dark:text-zinc-400">
-              Thumbnails are generated automatically when media is first viewed.
-              Clearing the cache deletes all existing thumbnails and queues them
-              for regeneration in the background. Existing media will still display
-              using the original files while thumbnails rebuild.
+        <motion.div
+          className="mx-auto max-w-2xl"
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.25 }}
+        >
+          <section className="rounded-xl border bg-card/80 p-6 shadow-sm backdrop-blur-sm">
+            <h2 className="mb-4 font-heading text-lg font-semibold">Thumbnail Cache</h2>
+            <p className="mb-6 text-sm text-muted-foreground">
+              Thumbnails are generated automatically when media is first viewed. Clearing
+              the cache deletes all existing thumbnails and queues them for regeneration
+              in the background. Existing media will still display using the original files
+              while thumbnails rebuild.
             </p>
 
-            <button
+            <Button
               onClick={handleClearThumbnails}
               disabled={status.type === "loading"}
-              className="rounded-lg border border-red-300 bg-red-50 px-4 py-2 text-sm font-medium text-red-700 transition hover:bg-red-100 disabled:opacity-50 dark:border-red-800 dark:bg-red-900/20 dark:text-red-300 dark:hover:bg-red-900/30"
+              variant="destructive"
             >
+              {status.type === "loading" ? (
+                <Loader2Icon className="animate-spin" data-icon="inline-start" />
+              ) : (
+                <Trash2Icon data-icon="inline-start" />
+              )}
               {status.type === "loading" ? "Clearing…" : "Clear & Regenerate Thumbnails"}
-            </button>
+            </Button>
 
-            {status.type === "success" && status.message && (
-              <div className="mt-4 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800 dark:border-green-800 dark:bg-green-900/20 dark:text-green-300">
-                {status.message}
-              </div>
-            )}
-
-            {status.type === "error" && status.message && (
-              <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-800 dark:bg-red-900/20 dark:text-red-300">
-                {status.message}
-              </div>
-            )}
+            <AnimatePresence mode="wait">
+              {status.type === "success" && status.message && (
+                <motion.div
+                  key="success"
+                  initial={{ opacity: 0, y: 4 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0 }}
+                  className="mt-4"
+                >
+                  <Alert>
+                    <AlertDescription>{status.message}</AlertDescription>
+                  </Alert>
+                </motion.div>
+              )}
+              {status.type === "error" && status.message && (
+                <motion.div
+                  key="error"
+                  initial={{ opacity: 0, y: 4 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0 }}
+                  className="mt-4"
+                >
+                  <Alert variant="destructive">
+                    <AlertDescription>{status.message}</AlertDescription>
+                  </Alert>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </section>
-        </div>
+        </motion.div>
       </main>
     </div>
   );

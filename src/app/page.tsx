@@ -1,6 +1,7 @@
 import Link from "next/link";
+import { FolderIcon, ListFilterIcon, SettingsIcon } from "lucide-react";
 import { getConfig } from "@/lib/config";
-import { getRootFolder, getFolderById, getFolderChildren, getMediaByFolderPaginated, getMediaGridItems, getMediaCountByFolder, getAdjacentMediaIds, getMediaPageForFolderItem, getFolderBreadcrumbs, hasFolders, getAllFolders, searchMediaGridItems } from "@/lib/db/folders";
+import { getRootFolder, getFolderById, getFolderChildren, getMediaGridItems, getMediaCountByFolder, getAdjacentMediaIds, getMediaPageForFolderItem, getFolderBreadcrumbs, hasFolders, getAllFolders, searchMediaGridItems } from "@/lib/db/folders";
 import { getMediaById, getTagsForMedia } from "@/lib/db/media";
 import { getAllTags } from "@/lib/db/media";
 import { FolderTree } from "@/components/gallery/FolderTree";
@@ -9,6 +10,7 @@ import { FullscreenViewer } from "@/components/gallery/FullscreenViewer";
 import { ScanLibraryButton } from "@/components/gallery/ScanLibraryButton";
 import { FilterModeClient } from "@/components/gallery/FilterModeClient";
 import { ScrollToTop } from "@/components/gallery/ScrollToTop";
+import { Button } from "@/components/ui/button";
 import { PAGE_SIZE } from "@/lib/gallery";
 
 // Force dynamic rendering to prevent build-time DB access and allow env vars
@@ -151,35 +153,29 @@ export default async function GalleryPage({ searchParams }: PageProps) {
   }
 
   return (
-    <div className="min-h-screen flex flex-col bg-zinc-50 dark:bg-zinc-950">
+    <div className="flex min-h-screen flex-col">
       {/* Header */}
-      <header className="border-b border-zinc-200 bg-white px-6 py-4 dark:border-zinc-800 dark:bg-zinc-900">
+      <header className="border-b bg-card/80 px-6 py-4 backdrop-blur-md">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <h1 className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50">
+          <h1 className="font-heading text-2xl font-bold tracking-tight">
             {config.appName}
           </h1>
-            <div className="flex items-center gap-4">
+          <div className="flex flex-wrap items-center gap-2">
             <ScanLibraryButton currentFolder={selectedFolderId?.toString()} />
             {selectedFolderId !== null && (
-              <a
-                href={`/?filter=1&folder=${selectedFolderId}`}
-                className={`flex items-center gap-2 rounded-lg border px-3 py-1.5 text-sm font-medium transition ${
-                  isFilterMode
-                    ? "border-blue-300 bg-blue-50 text-blue-700 dark:border-blue-700 dark:bg-blue-900/30 dark:text-blue-300"
-                    : "border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700"
-                }`}
+              <Button
+                variant={isFilterMode ? "secondary" : "outline"}
+                size="sm"
+                render={<a href={`/?filter=1&folder=${selectedFolderId}`} />}
               >
-                <span>⚙️</span>
-                <span>Filter</span>
-              </a>
+                <ListFilterIcon data-icon="inline-start" />
+                Filter
+              </Button>
             )}
-            <Link
-              href="/settings"
-              className="flex items-center gap-2 rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700"
-            >
-              <span>⚙️</span>
-              <span>Settings</span>
-            </Link>
+            <Button variant="outline" size="sm" render={<Link href="/settings" />}>
+              <SettingsIcon data-icon="inline-start" />
+              Settings
+            </Button>
           </div>
         </div>
       </header>
@@ -200,7 +196,7 @@ export default async function GalleryPage({ searchParams }: PageProps) {
       {/* Main content */}
       <div className="flex flex-1">
         {/* Sidebar */}
-        <aside className="w-64 shrink-0 border-r border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
+        <aside className="w-64 shrink-0 border-r bg-sidebar/80 p-4 text-sidebar-foreground backdrop-blur-sm">
           <FolderTree selectedId={selectedFolderId ?? undefined} />
         </aside>
 
@@ -208,22 +204,19 @@ export default async function GalleryPage({ searchParams }: PageProps) {
         <main className="flex-1 overflow-auto p-6">
           {/* Breadcrumbs */}
           {breadcrumbs.length > 0 && (
-            <nav className="mb-6 flex items-center gap-2 text-sm text-zinc-500 dark:text-zinc-400">
-              <Link href="/" className="hover:text-zinc-700 dark:hover:text-zinc-200">
+            <nav className="mb-6 flex items-center gap-2 text-sm text-muted-foreground">
+              <Link href="/" className="hover:text-foreground">
                 /
               </Link>
               {breadcrumbs.map((crumb, i) => (
                 <span key={crumb.id} className="flex items-center gap-2">
-                  <span className="text-zinc-400">/</span>
+                  <span className="opacity-50">/</span>
                   {i === breadcrumbs.length - 1 ? (
-                    <span className="font-medium text-zinc-900 dark:text-zinc-100">
+                    <span className="font-medium text-foreground">
                       {crumb.name || "Root"}
                     </span>
                   ) : (
-                    <Link
-                      href={`/?folder=${crumb.id}`}
-                      className="hover:text-zinc-700 dark:hover:text-zinc-200"
-                    >
+                    <Link href={`/?folder=${crumb.id}`} className="hover:text-foreground">
                       {crumb.name || "Root"}
                     </Link>
                   )}
@@ -231,10 +224,8 @@ export default async function GalleryPage({ searchParams }: PageProps) {
               ))}
               {isFilterMode && (
                 <span className="flex items-center gap-2">
-                  <span className="text-zinc-400">/</span>
-                  <span className="font-medium text-blue-600 dark:text-blue-400">
-                    Filtered Results
-                  </span>
+                  <span className="opacity-50">/</span>
+                  <span className="font-medium text-primary">Filtered Results</span>
                 </span>
               )}
             </nav>
@@ -243,11 +234,13 @@ export default async function GalleryPage({ searchParams }: PageProps) {
           {!libraryExists ? (
             /* Empty state: library not scanned */
             <div className="flex flex-col items-center justify-center py-24 text-center">
-              <div className="mb-6 text-6xl">📁</div>
-              <h2 className="mb-2 text-xl font-semibold text-zinc-900 dark:text-zinc-100">
+              <div className="mb-6 flex size-16 items-center justify-center rounded-2xl bg-muted text-muted-foreground">
+                <FolderIcon className="size-8" />
+              </div>
+              <h2 className="mb-2 font-heading text-xl font-semibold">
                 Library not scanned
               </h2>
-              <p className="mb-8 max-w-md text-zinc-500 dark:text-zinc-400">
+              <p className="mb-8 max-w-md text-muted-foreground">
                 Scan your media library to index folders and files. The folder tree will
                 appear here once scanning is complete.
               </p>
@@ -265,18 +258,20 @@ export default async function GalleryPage({ searchParams }: PageProps) {
               />
               {filterTotalCount === 0 ? (
                 <div className="flex flex-col items-center justify-center py-24 text-center">
-                  <div className="mb-6 text-6xl">🔍</div>
-                  <h2 className="mb-2 text-xl font-semibold text-zinc-900 dark:text-zinc-100">
+                  <div className="mb-6 flex size-16 items-center justify-center rounded-2xl bg-muted text-muted-foreground">
+                    <ListFilterIcon className="size-8" />
+                  </div>
+                  <h2 className="mb-2 font-heading text-xl font-semibold">
                     No matching media
                   </h2>
-                  <p className="max-w-md text-zinc-500 dark:text-zinc-400">
+                  <p className="max-w-md text-muted-foreground">
                     No media items match the current filters in this folder or its subfolders.
                   </p>
                 </div>
               ) : (
                 <>
                   <div className="mb-4 flex items-center justify-between">
-                    <h2 className="text-sm font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                    <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
                       Media ({filterTotalCount})
                     </h2>
                   </div>
@@ -296,16 +291,18 @@ export default async function GalleryPage({ searchParams }: PageProps) {
           ) : selectedFolder === null ? (
             /* Empty state: no folder selected (shouldn't normally happen with root fallback) */
             <div className="flex flex-col items-center justify-center py-24 text-center">
-              <p className="text-zinc-500 dark:text-zinc-400">Select a folder to view media.</p>
+              <p className="text-muted-foreground">Select a folder to view media.</p>
             </div>
           ) : childFolders.length === 0 && initialMediaItems.length === 0 ? (
             /* Empty state: folder is empty */
             <div className="flex flex-col items-center justify-center py-24 text-center">
-              <div className="mb-6 text-6xl">🗂️</div>
-              <h2 className="mb-2 text-xl font-semibold text-zinc-900 dark:text-zinc-100">
+              <div className="mb-6 flex size-16 items-center justify-center rounded-2xl bg-muted text-muted-foreground">
+                <FolderIcon className="size-8" />
+              </div>
+              <h2 className="mb-2 font-heading text-xl font-semibold">
                 This folder is empty
               </h2>
-              <p className="max-w-md text-zinc-400 dark:text-zinc-400">
+              <p className="max-w-md text-muted-foreground">
                 No subfolders or media files were found in this location.
               </p>
             </div>
@@ -314,7 +311,7 @@ export default async function GalleryPage({ searchParams }: PageProps) {
               {/* Subfolder cards */}
               {childFolders.length > 0 && (
                 <section className="mb-8">
-                  <h2 className="mb-4 text-sm font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                  <h2 className="mb-4 text-sm font-semibold uppercase tracking-wider text-muted-foreground">
                     Subfolders
                   </h2>
                   <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
@@ -322,10 +319,10 @@ export default async function GalleryPage({ searchParams }: PageProps) {
                       <Link
                         key={child.id}
                         href={`/?folder=${child.id}`}
-                        className="flex items-center gap-3 rounded-lg border border-zinc-200 bg-white px-4 py-3 transition hover:border-blue-300 hover:bg-blue-50 dark:border-zinc-800 dark:bg-zinc-900 dark:hover:border-blue-700 dark:hover:bg-blue-900/20"
+                        className="flex items-center gap-3 rounded-xl border bg-card/70 px-4 py-3 transition-colors hover:border-primary/40 hover:bg-accent"
                       >
-                        <span className="text-2xl">📁</span>
-                        <span className="truncate text-sm font-medium text-zinc-700 dark:text-zinc-200">
+                        <FolderIcon className="size-5 shrink-0 text-muted-foreground" />
+                        <span className="truncate text-sm font-medium">
                           {child.name || "Root"}
                         </span>
                       </Link>
@@ -338,14 +335,12 @@ export default async function GalleryPage({ searchParams }: PageProps) {
               {initialMediaItems.length > 0 && (
                 <section>
                   <div className="mb-4 flex items-center justify-between">
-                    <h2 className="text-sm font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                    <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
                       Media ({totalMediaCount})
                     </h2>
                     {totalPages > 1 && (
-                      <div className="flex items-center gap-2 text-sm text-zinc-500 dark:text-zinc-400">
-                        <span>
-                          Showing {PAGE_SIZE} per page
-                        </span>
+                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                        <span>Showing {PAGE_SIZE} per page</span>
                       </div>
                     )}
                   </div>
