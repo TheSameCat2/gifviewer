@@ -103,10 +103,31 @@ export function FullscreenViewer({
     setError(null);
     setPending(false);
     tagInputShouldFocusRef.current = false;
-    const frame = requestAnimationFrame(() => {
-      tagInputRef.current?.focus();
-    });
-    return () => cancelAnimationFrame(frame);
+
+    const focusTagInput = () => {
+      tagInputRef.current?.focus({ preventScroll: true });
+    };
+    focusTagInput();
+
+    // Next.js restores focus to the clicked Previous/Next control after
+    // client navigation. Recapture the tag field for a brief window.
+    const onFocusIn = (event: FocusEvent) => {
+      if (event.target !== tagInputRef.current) {
+        focusTagInput();
+      }
+    };
+    document.addEventListener("focusin", onFocusIn, true);
+    const frame = requestAnimationFrame(focusTagInput);
+    const timeout = window.setTimeout(() => {
+      document.removeEventListener("focusin", onFocusIn, true);
+      focusTagInput();
+    }, 150);
+
+    return () => {
+      cancelAnimationFrame(frame);
+      window.clearTimeout(timeout);
+      document.removeEventListener("focusin", onFocusIn, true);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- These are initial values that should only trigger reset on item.id change
   }, [item.id, item.folder_id]);
 
@@ -481,7 +502,8 @@ export function FullscreenViewer({
               onKeyDown={(e) => e.key === "Enter" && handleAddTag()}
               placeholder="add tag"
               autoFocus
-              className="w-24 rounded bg-white/10 px-2 py-0.5 text-xs text-white placeholder-zinc-400"
+              data-testid="add-tag-input"
+              className="w-24 rounded bg-white/10 px-2 py-0.5 text-xs text-white placeholder-zinc-400 outline-none ring-1 ring-white/30 focus:ring-2 focus:ring-white"
             />
             <button
               onClick={handleAddTag}
