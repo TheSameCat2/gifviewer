@@ -10,6 +10,7 @@ import { ContextMenu, ContextMenuEntry } from "./ContextMenu";
 import { Button } from "@/components/ui/button";
 import { blurhashToDataUrl } from "@/lib/media/blurhash";
 import { useWindowVirtualizer } from "@tanstack/react-virtual";
+import { galleryHref } from "@/lib/gallery";
 
 interface MediaGridProps {
   initialItems: MediaGridItem[];
@@ -414,14 +415,15 @@ export function MediaGrid({
 
   if (items.length === 0) return null;
 
-  // Build href using current loadedPages state
-  const buildHref = (itemId: number) => {
-    const params = new URLSearchParams();
-    params.set("folder", String(folderId));
-    params.set("page", String(loadedPages));
-    params.set("media", String(itemId));
-    return `?${params.toString()}`;
-  };
+  // Build href using current loadedPages state. Filter view must keep
+  // filter/tags/rating so fullscreen next/prev stays in the result set.
+  const buildHref = (itemId: number) =>
+    galleryHref({
+      folderId,
+      page: loadedPages,
+      mediaId: itemId,
+      filter: isFilterMode ? { tags: filterTags, rating: filterRating } : undefined,
+    });
 
   const contextMenuItems = (mediaItem: MediaItem): ContextMenuEntry[] => {
     const entries: ContextMenuEntry[] = [

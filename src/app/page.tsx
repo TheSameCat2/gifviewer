@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { FolderIcon, ListFilterIcon, SettingsIcon } from "lucide-react";
 import { getConfig } from "@/lib/config";
-import { getRootFolder, getFolderById, getFolderChildren, getMediaGridItems, getMediaCountByFolder, getAdjacentMediaIds, getMediaPageForFolderItem, getFolderBreadcrumbs, hasFolders, getAllFolders, searchMediaGridItems } from "@/lib/db/folders";
+import { getRootFolder, getFolderById, getFolderChildren, getMediaGridItems, getMediaCountByFolder, getAdjacentMediaIds, getAdjacentSearchMediaIds, getMediaPageForFolderItem, getMediaPageForSearchItem, getFolderBreadcrumbs, hasFolders, getAllFolders, searchMediaGridItems } from "@/lib/db/folders";
 import { getMediaById, getTagsForMedia } from "@/lib/db/media";
 import { getAllTags } from "@/lib/db/media";
 import { FolderTree } from "@/components/gallery/FolderTree";
@@ -11,7 +11,7 @@ import { ScanLibraryButton } from "@/components/gallery/ScanLibraryButton";
 import { FilterModeClient } from "@/components/gallery/FilterModeClient";
 import { ScrollToTop } from "@/components/gallery/ScrollToTop";
 import { Button } from "@/components/ui/button";
-import { PAGE_SIZE } from "@/lib/gallery";
+import { PAGE_SIZE, galleryHref } from "@/lib/gallery";
 
 // Force dynamic rendering to prevent build-time DB access and allow env vars
 export const dynamic = "force-dynamic";
@@ -75,12 +75,6 @@ export default async function GalleryPage({ searchParams }: PageProps) {
   const totalMediaCount = selectedFolder ? getMediaCountByFolder(selectedFolder.id) : 0;
   const totalPages = Math.max(1, Math.ceil(totalMediaCount / PAGE_SIZE));
 
-  // If a selected media item belongs to the selected folder, derive its page
-  const selectedMediaPage =
-    selectedMedia && selectedFolderId !== null && selectedMedia.folder_id === selectedFolderId
-      ? getMediaPageForFolderItem(selectedFolderId, selectedMediaId!, PAGE_SIZE) ?? requestedPage
-      : null;
-
   // Hydrate only the first page server-side; client infinite-scroll fetches the rest
   const ssrLimit = PAGE_SIZE;
 
@@ -91,29 +85,70 @@ export default async function GalleryPage({ searchParams }: PageProps) {
 
   const breadcrumbs = selectedFolderId ? getFolderBreadcrumbs(selectedFolderId) : [];
 
+  // Parse filter state from search params (needed before next/prev hrefs)
+  const isFilterMode = filterParam === "1";
+  const activeTags = tagsParam
+    ? tagsParam.split(",").map(Number).filter((n) => Number.isInteger(n) && n > 0)
+    : [];
+  const activeRating = ratingParam ? Math.max(0, Math.min(5, parseInt(ratingParam, 10) || 0)) : 0;
+  const filterState = isFilterMode ? { tags: activeTags, rating: activeRating } : undefined;
+  const searchOptions = {
+    folderId: selectedFolderId,
+    minRating: activeRating,
+    tagIds: activeTags,
+  };
+  const hasActiveFilters = activeTags.length > 0 || activeRating > 0;
+
+  // If a selected media item belongs to the current list, derive its page
+  const selectedMediaPage = selectedMedia
+    ? isFilterMode && hasActiveFilters
+      ? getMediaPageForSearchItem(selectedMediaId!, PAGE_SIZE, searchOptions) ?? requestedPage
+      : selectedFolderId !== null && selectedMedia.folder_id === selectedFolderId
+        ? getMediaPageForFolderItem(selectedFolderId, selectedMediaId!, PAGE_SIZE) ?? requestedPage
+        : null
+    : null;
+
   // Compute previousHref/nextHref for fullscreen navigation
   let previousHref: string | null = null;
   let nextHref: string | null = null;
   if (selectedMedia && selectedFolderId !== null) {
-    const { previousId, nextId } = getAdjacentMediaIds(selectedFolderId, selectedMediaId!);
-    const folderPart = `?folder=${selectedFolderId}`;
+    const { previousId, nextId } =
+      isFilterMode && hasActiveFilters
+        ? getAdjacentSearchMediaIds(selectedMediaId!, searchOptions)
+        : getAdjacentMediaIds(selectedFolderId, selectedMediaId!);
 
     if (previousId !== null) {
-      const prevPage =
-        getMediaPageForFolderItem(selectedFolderId, previousId, PAGE_SIZE) ?? 1;
-      previousHref = `${folderPart}&page=${prevPage}&media=${previousId}`;
+      const prevPage = isFilterMode && hasActiveFilters
+        ? getMediaPageForSearchItem(previousId, PAGE_SIZE, searchOptions) ?? 1
+        : getMediaPageForFolderItem(selectedFolderId, previousId, PAGE_SIZE) ?? 1;
+      previousHref = galleryHref({
+        folderId: selectedFolderId,
+        page: prevPage,
+        mediaId: previousId,
+        filter: filterState,
+      });
     }
 
     if (nextId !== null) {
-      const nextPage =
-        getMediaPageForFolderItem(selectedFolderId, nextId, PAGE_SIZE) ?? 1;
-      nextHref = `${folderPart}&page=${nextPage}&media=${nextId}`;
+      const nextPage = isFilterMode && hasActiveFilters
+        ? getMediaPageForSearchItem(nextId, PAGE_SIZE, searchOptions) ?? 1
+        : getMediaPageForFolderItem(selectedFolderId, nextId, PAGE_SIZE) ?? 1;
+      nextHref = galleryHref({
+        folderId: selectedFolderId,
+        page: nextPage,
+        mediaId: nextId,
+        filter: filterState,
+      });
     }
   }
 
   // backHref points to the selected media's page (or the requested page as fallback)
   const backHref = selectedFolderId !== null
-    ? `/?folder=${selectedFolderId}&page=${selectedMediaPage ?? requestedPage}`
+    ? galleryHref({
+        folderId: selectedFolderId,
+        page: selectedMediaPage ?? requestedPage,
+        filter: filterState,
+      })
     : "/";
 
   const libraryExists = hasFolders();
@@ -127,24 +162,15 @@ export default async function GalleryPage({ searchParams }: PageProps) {
       }))
     : [];
 
-  // Parse filter state from search params
-  const isFilterMode = filterParam === "1";
-  const activeTags = tagsParam
-    ? tagsParam.split(",").map(Number).filter((n) => Number.isInteger(n) && n > 0)
-    : [];
-  const activeRating = ratingParam ? Math.max(0, Math.min(5, parseInt(ratingParam, 10) || 0)) : 0;
-
   // Get all available tags (only needed in filter mode)
   const allTags = isFilterMode ? getAllTags() : [];
 
   // Filter-mode data: hydrate only one page server-side (grid-optimized columns only)
   let filterInitialItems: import("@/lib/db/media").MediaGridItem[] = [];
   let filterTotalCount = 0;
-  if (isFilterMode && (activeTags.length > 0 || activeRating > 0)) {
+  if (isFilterMode && hasActiveFilters) {
     const raw = searchMediaGridItems({
-      folderId: selectedFolderId,
-      minRating: activeRating,
-      tagIds: activeTags,
+      ...searchOptions,
       limit: ssrLimit,
       offset: 0,
     });
