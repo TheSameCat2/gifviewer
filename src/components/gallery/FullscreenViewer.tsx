@@ -97,8 +97,9 @@ export function FullscreenViewer({
     }
   }, [pending]);
 
-  // Keyboard navigation: left/right arrows to navigate between media items,
-  // Escape to close the fullscreen view.
+  // Left/right always go to the previous/next item, even while the tag
+  // input (or other controls) are focused. Capture so the field cannot
+  // steal the arrows for caret movement.
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
@@ -108,17 +109,16 @@ export function FullscreenViewer({
       }
       if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
       if (e.metaKey || e.ctrlKey || e.altKey) return;
-      const target = e.target as HTMLElement;
-      const tagName = target.tagName.toLowerCase();
-      if (["input", "textarea", "select", "button", "a", "video"].includes(tagName) || target.isContentEditable) return;
+      if (e.isComposing) return;
+      e.preventDefault();
       if (e.key === "ArrowLeft" && previousHref !== null) {
         router.push(previousHref);
       } else if (e.key === "ArrowRight" && nextHref !== null) {
         router.push(nextHref);
       }
     };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
+    window.addEventListener("keydown", handleKeyDown, true);
+    return () => window.removeEventListener("keydown", handleKeyDown, true);
   }, [backHref, previousHref, nextHref, router]);
 
   const currentFolderName = folderOptions.find((f) => f.id === item.folder_id)?.name ?? "/";
