@@ -150,6 +150,11 @@ export function FullscreenViewer({
       setTags(res.tags);
       setTagInput("");
       tagInputShouldFocusRef.current = true;
+      window.dispatchEvent(
+        new CustomEvent("mediaTagsChanged", {
+          detail: { mediaId: item.id, hasTags: res.tags.length > 0 },
+        })
+      );
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to add tag");
     } finally {
@@ -164,6 +169,11 @@ export function FullscreenViewer({
       try {
         const res = await patchMedia(item.id, { action: "removeTag", tagId });
         setTags(res.tags);
+        window.dispatchEvent(
+          new CustomEvent("mediaTagsChanged", {
+            detail: { mediaId: item.id, hasTags: res.tags.length > 0 },
+          })
+        );
       } catch (e) {
         setError(e instanceof Error ? e.message : "Failed to remove tag");
       } finally {

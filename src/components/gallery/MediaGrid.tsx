@@ -5,7 +5,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { useRouter, useSearchParams } from "next/navigation";
 import { MediaGridItem } from "@/lib/db/media";
-import { ClipboardPasteIcon, UploadIcon } from "lucide-react";
+import { ClipboardPasteIcon, TagIcon, UploadIcon } from "lucide-react";
 import { ContextMenu, ContextMenuEntry } from "./ContextMenu";
 import { Button } from "@/components/ui/button";
 import { blurhashToDataUrl } from "@/lib/media/blurhash";
@@ -88,6 +88,72 @@ function BlurhashPlaceholder({
         ...style 
       }} 
     />
+  );
+}
+
+function ThumbnailCell({
+  item,
+  href,
+  isCutSource,
+  onContextMenu,
+}: {
+  item: MediaItem;
+  href: string;
+  isCutSource: boolean;
+  onContextMenu: (e: React.MouseEvent, item: MediaItem) => void;
+}) {
+  return (
+    <div
+      data-media-id={item.id}
+      className={`group relative flex aspect-square items-center justify-center overflow-hidden rounded-xl bg-muted ${
+        isCutSource ? "ring-2 ring-amber-400 opacity-60" : ""
+      }`}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        onContextMenu(e, item);
+      }}
+    >
+      <Link
+        href={href}
+        scroll={false}
+        onClick={() => {
+          sessionStorage.setItem(
+            "mediaGridScroll",
+            JSON.stringify({
+              scrollY: window.scrollY,
+              mediaId: item.id,
+            })
+          );
+        }}
+        className="absolute inset-0"
+      >
+        {item.thumb_blurhash ? <BlurhashPlaceholder hash={item.thumb_blurhash} /> : null}
+        <Image
+          src={`/api/thumbs/${item.id}?size=small`}
+          alt={item.filename}
+          fill
+          unoptimized
+          sizes="(min-width: 1280px) 16vw, (min-width: 1024px) 20vw, (min-width: 768px) 25vw, 50vw"
+          className="object-cover opacity-0 transition-opacity duration-300"
+          onLoad={(e) => {
+            const el = e.currentTarget as HTMLElement;
+            el.classList.remove("opacity-0");
+            el.classList.add("opacity-100");
+          }}
+        />
+        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/60 to-transparent px-2 py-2 opacity-0 transition-opacity group-hover:opacity-100">
+          <p className="truncate text-xs text-white">{item.filename}</p>
+        </div>
+        {item.has_tags ? (
+          <span
+            className="pointer-events-none absolute right-1.5 bottom-1.5 z-10 flex size-4 items-center justify-center rounded bg-black/65 text-white"
+            aria-label="Tagged"
+          >
+            <TagIcon className="size-2.5" />
+          </span>
+        ) : null}
+      </Link>
+    </div>
   );
 }
 
@@ -287,7 +353,10 @@ export function MediaGrid({
             removedIds.add(id);
           }
         }
-        const filtered = prev.filter((i) => !removedIds.has(i.id));
+        const incomingById = new Map(initialItems.map((i) => [i.id, i]));
+        const filtered = prev
+          .filter((i) => !removedIds.has(i.id))
+          .map((i) => incomingById.get(i.id) ?? i);
         const filteredIds = new Set(filtered.map((i) => i.id));
         const newItems = initialItems.filter((i) => !filteredIds.has(i.id));
         return [...newItems, ...filtered];
@@ -349,6 +418,20 @@ export function MediaGrid({
     };
     window.addEventListener("mediaDeleted", handleDelete);
     return () => window.removeEventListener("mediaDeleted", handleDelete);
+  }, []);
+
+  useEffect(() => {
+    const handleTagsChanged = (e: Event) => {
+      const detail = (e as CustomEvent<{ mediaId: number; hasTags: boolean }>).detail;
+      if (!detail || typeof detail.mediaId !== "number") return;
+      setItems((prev) =>
+        prev.map((i) =>
+          i.id === detail.mediaId ? { ...i, has_tags: detail.hasTags ? 1 : 0 } : i
+        )
+      );
+    };
+    window.addEventListener("mediaTagsChanged", handleTagsChanged);
+    return () => window.removeEventListener("mediaTagsChanged", handleTagsChanged);
   }, []);
 
   // --- Clipboard operations ---
@@ -468,63 +551,17 @@ export function MediaGrid({
 
       {!mounted ? (
         <div ref={containerRef} className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
-          {items.map((item) => {
-            const href = buildHref(item.id);
-            const thumbSrc = `/api/thumbs/${item.id}?size=small`;
-            const isCutSource = clipboard?.operation === "cut" && clipboard?.mediaId === item.id;
-
-            return (
-              <div
-                key={item.id}
-                data-media-id={item.id}
-                className={`group relative flex aspect-square items-center justify-center overflow-hidden rounded-xl bg-muted ${
-                  isCutSource ? "ring-2 ring-amber-400 opacity-60" : ""
-                }`}
-                onContextMenu={(e) => {
-                  e.preventDefault();
-                  setCtxMenu({ x: e.clientX, y: e.clientY, item });
-                }}
-              >
-                <Link
-                  href={href}
-                  scroll={false}
-                  onClick={() => {
-                    sessionStorage.setItem(
-                      "mediaGridScroll",
-                      JSON.stringify({
-                        scrollY: window.scrollY,
-                        mediaId: item.id,
-                      })
-                    );
-                  }}
-                  className="absolute inset-0"
-                >
-                  {/* Blurhash placeholder */}
-                  {item.thumb_blurhash && (
-                    <BlurhashPlaceholder hash={item.thumb_blurhash} />
-                  )}
-                  {/* Thumbnail image with zero-React-render load transition */}
-                  <Image
-                    src={thumbSrc}
-                    alt={item.filename}
-                    fill
-                    unoptimized
-                    sizes="(min-width: 1280px) 16vw, (min-width: 1024px) 20vw, (min-width: 768px) 25vw, 50vw"
-                    className="object-cover opacity-0 transition-opacity duration-300"
-                    onLoad={(e) => {
-                      const el = e.currentTarget as HTMLElement;
-                      el.classList.remove("opacity-0");
-                      el.classList.add("opacity-100");
-                    }}
-                  />
-                  {/* Overlay with filename */}
-                  <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/60 to-transparent px-2 py-2 opacity-0 transition-opacity group-hover:opacity-100">
-                    <p className="truncate text-xs text-white">{item.filename}</p>
-                  </div>
-                </Link>
-              </div>
-            );
-          })}
+          {items.map((item) => (
+            <ThumbnailCell
+              key={item.id}
+              item={item}
+              href={buildHref(item.id)}
+              isCutSource={clipboard?.operation === "cut" && clipboard?.mediaId === item.id}
+              onContextMenu={(e, mediaItem) => {
+                setCtxMenu({ x: e.clientX, y: e.clientY, item: mediaItem });
+              }}
+            />
+          ))}
         </div>
       ) : (
         <div ref={containerRef} className="w-full">
@@ -558,63 +595,17 @@ export function MediaGrid({
                       gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
                     }}
                   >
-                    {rowItems.map((item) => {
-                      const href = buildHref(item.id);
-                      const thumbSrc = `/api/thumbs/${item.id}?size=small`;
-                      const isCutSource = clipboard?.operation === "cut" && clipboard?.mediaId === item.id;
-
-                      return (
-                        <div
-                          key={item.id}
-                          data-media-id={item.id}
-                          className={`group relative flex aspect-square items-center justify-center overflow-hidden rounded-xl bg-muted ${
-                            isCutSource ? "ring-2 ring-amber-400 opacity-60" : ""
-                          }`}
-                          onContextMenu={(e) => {
-                            e.preventDefault();
-                            setCtxMenu({ x: e.clientX, y: e.clientY, item });
-                          }}
-                        >
-                          <Link
-                            href={href}
-                            scroll={false}
-                            onClick={() => {
-                              sessionStorage.setItem(
-                                "mediaGridScroll",
-                                JSON.stringify({
-                                  scrollY: window.scrollY,
-                                  mediaId: item.id,
-                                })
-                              );
-                            }}
-                            className="absolute inset-0"
-                          >
-                            {/* Blurhash placeholder */}
-                            {item.thumb_blurhash && (
-                              <BlurhashPlaceholder hash={item.thumb_blurhash} />
-                            )}
-                            {/* Thumbnail image with zero-React-render load transition */}
-                            <Image
-                              src={thumbSrc}
-                              alt={item.filename}
-                              fill
-                              unoptimized
-                              sizes="(min-width: 1280px) 16vw, (min-width: 1024px) 20vw, (min-width: 768px) 25vw, 50vw"
-                              className="object-cover opacity-0 transition-opacity duration-300"
-                              onLoad={(e) => {
-                                const el = e.currentTarget as HTMLElement;
-                                el.classList.remove("opacity-0");
-                                el.classList.add("opacity-100");
-                              }}
-                            />
-                            {/* Overlay with filename */}
-                            <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/60 to-transparent px-2 py-2 opacity-0 transition-opacity group-hover:opacity-100">
-                              <p className="truncate text-xs text-white">{item.filename}</p>
-                            </div>
-                          </Link>
-                        </div>
-                      );
-                    })}
+                    {rowItems.map((item) => (
+                      <ThumbnailCell
+                        key={item.id}
+                        item={item}
+                        href={buildHref(item.id)}
+                        isCutSource={clipboard?.operation === "cut" && clipboard?.mediaId === item.id}
+                        onContextMenu={(e, mediaItem) => {
+                          setCtxMenu({ x: e.clientX, y: e.clientY, item: mediaItem });
+                        }}
+                      />
+                    ))}
                   </div>
                 </div>
               );
