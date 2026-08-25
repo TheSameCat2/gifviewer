@@ -303,24 +303,24 @@ export function FullscreenViewer({
       animate={{ opacity: 1 }}
       transition={{ duration: 0.18 }}
     >
-      {/* Close button */}
+      {/* Close sits above the centered nav strip. The strip is full-width, so
+          without pointer-events-none its empty space swallows Close clicks. */}
       <Button
         variant="secondary"
         size="sm"
-        className="absolute left-4 top-4 z-10 bg-black/50 text-white hover:bg-black/70"
+        className="absolute left-4 top-4 z-20 bg-black/50 text-white hover:bg-black/70"
         render={<Link href={backHref} scroll={false} />}
       >
         <XIcon data-icon="inline-start" />
         Close
       </Button>
 
-      {/* Navigation */}
-      <div className="absolute inset-x-0 top-4 z-10 flex justify-center gap-2">
+      <div className="pointer-events-none absolute inset-x-0 top-4 z-10 flex justify-center gap-2">
         {previousHref !== null && (
           <Button
             variant="secondary"
             size="sm"
-            className="bg-black/50 text-white hover:bg-black/70"
+            className="pointer-events-auto bg-black/50 text-white hover:bg-black/70"
             render={<Link href={previousHref} scroll={false} />}
           >
             <ChevronLeftIcon data-icon="inline-start" />
@@ -331,7 +331,7 @@ export function FullscreenViewer({
           <Button
             variant="secondary"
             size="sm"
-            className="bg-black/50 text-white hover:bg-black/70"
+            className="pointer-events-auto bg-black/50 text-white hover:bg-black/70"
             render={<Link href={nextHref} scroll={false} />}
           >
             Next
@@ -343,7 +343,7 @@ export function FullscreenViewer({
       {/* Media */}
       <motion.div
         key={item.id}
-        className="relative h-[85vh] w-[calc(100vw-2rem)] max-w-[calc(100vw-2rem)] p-4"
+        className="relative z-0 h-[85vh] w-[calc(100vw-2rem)] max-w-[calc(100vw-2rem)] p-4"
         initial={{ opacity: 0, scale: 0.985 }}
         animate={{ opacity: 1, scale: 1 }}
         transition={{ duration: 0.2, ease: "easeOut" }}
