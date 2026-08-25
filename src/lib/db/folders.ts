@@ -292,6 +292,64 @@ function buildSearchWhere(
   return { where, params };
 }
 
+function andSearchCondition(where: string, extra: string): string {
+  return where ? `${where} AND ${extra}` : `WHERE ${extra}`;
+}
+
+/**
+ * Previous/next media IDs in a filtered search result set.
+ * Search results are ordered by id DESC, so previous is the next-higher id
+ * and next is the next-lower id among matches.
+ */
+export function getAdjacentSearchMediaIds(
+  mediaId: number,
+  options: SearchMediaOptions = {}
+): { previousId: number | null; nextId: number | null } {
+  const db = getDb();
+  const { where, params } = buildSearchWhere(db, options);
+
+  const current = db
+    .prepare(`SELECT m.id FROM media m ${andSearchCondition(where, "m.id = ?")}`)
+    .get(...params, mediaId) as { id: number } | undefined;
+  if (!current) return { previousId: null, nextId: null };
+
+  const prev = db
+    .prepare(
+      `SELECT m.id FROM media m ${andSearchCondition(where, "m.id > ?")} ORDER BY m.id ASC LIMIT 1`
+    )
+    .get(...params, mediaId) as { id: number } | undefined;
+
+  const next = db
+    .prepare(
+      `SELECT m.id FROM media m ${andSearchCondition(where, "m.id < ?")} ORDER BY m.id DESC LIMIT 1`
+    )
+    .get(...params, mediaId) as { id: number } | undefined;
+
+  return { previousId: prev?.id ?? null, nextId: next?.id ?? null };
+}
+
+/** 1-based page of a media item within a filtered search result set, or null if it is not a match. */
+export function getMediaPageForSearchItem(
+  mediaId: number,
+  pageSize: number,
+  options: SearchMediaOptions = {}
+): number | null {
+  const db = getDb();
+  const { where, params } = buildSearchWhere(db, options);
+
+  const current = db
+    .prepare(`SELECT m.id FROM media m ${andSearchCondition(where, "m.id = ?")}`)
+    .get(...params, mediaId) as { id: number } | undefined;
+  if (!current) return null;
+
+  // Higher ids sort first (ORDER BY m.id DESC), so they occupy earlier pages.
+  const row = db
+    .prepare(`SELECT COUNT(*) as cnt FROM media m ${andSearchCondition(where, "m.id > ?")}`)
+    .get(...params, mediaId) as { cnt: number } | undefined;
+  if (!row) return null;
+  return Math.floor(row.cnt / pageSize) + 1;
+}
+
 /**
  * Search media with optional folder hierarchy scope, rating threshold, and tag filtering.
  * Uses a recursive CTE to include all descendant folders when folderId is set.
