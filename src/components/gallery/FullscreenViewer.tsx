@@ -34,6 +34,23 @@ function isVideoMime(mimeType: string | null): boolean {
   return mimeType === "video/webm";
 }
 
+/** True when digit keys should type into a field instead of setting a star rating. */
+function isDigitShortcutBlocked(
+  target: EventTarget | null,
+  tagInput: HTMLInputElement | null
+): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.isContentEditable) return true;
+  if (target === tagInput) {
+    return tagInput.value.length > 0;
+  }
+  if (target instanceof HTMLTextAreaElement) return true;
+  if (target instanceof HTMLInputElement) {
+    return target.type === "text" || target.type === "search" || target.type === "email";
+  }
+  return false;
+}
+
 function formatFileSize(bytes: number | null): string {
   if (bytes === null) return "Unknown size";
   if (bytes < 1024) return `${bytes} B`;
@@ -86,10 +103,14 @@ export function FullscreenViewer({
     setError(null);
     setPending(false);
     tagInputShouldFocusRef.current = false;
+    const frame = requestAnimationFrame(() => {
+      tagInputRef.current?.focus();
+    });
+    return () => cancelAnimationFrame(frame);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- These are initial values that should only trigger reset on item.id change
   }, [item.id, item.folder_id]);
 
-  // Restore tag input focus after a successful tag add
+  // Restore tag input focus after a rating or tag mutation
   useEffect(() => {
     if (!pending && tagInputShouldFocusRef.current) {
       tagInputShouldFocusRef.current = false;
@@ -97,36 +118,13 @@ export function FullscreenViewer({
     }
   }, [pending]);
 
-  // Left/right always go to the previous/next item, even while the tag
-  // input (or other controls) are focused. Capture so the field cannot
-  // steal the arrows for caret movement.
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        router.push(backHref, { scroll: false });
-        return;
-      }
-      if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
-      if (e.metaKey || e.ctrlKey || e.altKey) return;
-      if (e.isComposing) return;
-      e.preventDefault();
-      if (e.key === "ArrowLeft" && previousHref !== null) {
-        router.push(previousHref);
-      } else if (e.key === "ArrowRight" && nextHref !== null) {
-        router.push(nextHref);
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown, true);
-    return () => window.removeEventListener("keydown", handleKeyDown, true);
-  }, [backHref, previousHref, nextHref, router]);
-
   const currentFolderName = folderOptions.find((f) => f.id === item.folder_id)?.name ?? "/";
 
   const handleRating = useCallback(
     async (r: number) => {
       setPending(true);
       setError(null);
+      tagInputShouldFocusRef.current = true;
       try {
         const res = await patchMedia(item.id, { action: "setRating", rating: r });
         setRating(res.rating);
@@ -139,6 +137,43 @@ export function FullscreenViewer({
     },
     [item.id]
   );
+
+  // Left/right always go to the previous/next item, even while the tag
+  // input (or other controls) are focused. Capture so the field cannot
+  // steal the arrows for caret movement. Number keys 1-5 set the star
+  // rating unless the user is already typing a tag.
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.isComposing) return;
+
+      if (e.key === "Escape") {
+        e.preventDefault();
+        router.push(backHref, { scroll: false });
+        return;
+      }
+
+      if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+        e.preventDefault();
+        if (e.key === "ArrowLeft" && previousHref !== null) {
+          router.push(previousHref, { scroll: false });
+        } else if (e.key === "ArrowRight" && nextHref !== null) {
+          router.push(nextHref, { scroll: false });
+        }
+        return;
+      }
+
+      if (/^[1-5]$/.test(e.key)) {
+        if (isDigitShortcutBlocked(e.target, tagInputRef.current)) return;
+        e.preventDefault();
+        if (pending) return;
+        const star = Number(e.key);
+        void handleRating(star === rating ? 0 : star);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown, true);
+    return () => window.removeEventListener("keydown", handleKeyDown, true);
+  }, [backHref, previousHref, nextHref, router, handleRating, rating, pending]);
 
   const handleAddTag = useCallback(async () => {
     const trimmed = tagInput.trim();
@@ -445,8 +480,8 @@ export function FullscreenViewer({
               onChange={(e) => setTagInput(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleAddTag()}
               placeholder="add tag"
-              disabled={pending}
-              className="w-24 rounded bg-white/10 px-2 py-0.5 text-xs text-white placeholder-zinc-400 disabled:opacity-50"
+              autoFocus
+              className="w-24 rounded bg-white/10 px-2 py-0.5 text-xs text-white placeholder-zinc-400"
             />
             <button
               onClick={handleAddTag}
