@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { getDescendantFolderIds } from "@/lib/db/folders";
-import { MediaGridItem } from "@/lib/db/media";
+import { MediaGridItem, mediaGridSelectSql } from "@/lib/db/media";
 import { PAGE_SIZE } from "@/lib/gallery";
 
 export const runtime = "nodejs";
@@ -100,7 +100,7 @@ export async function GET(request: NextRequest) {
   // Fetch paginated items (grid-optimized columns only)
   const items = db
     .prepare(
-      `SELECT DISTINCT m.id, m.filename, m.mime_type, m.thumb_blurhash FROM media m ${whereClause} ORDER BY m.id DESC LIMIT ? OFFSET ?`
+      `SELECT DISTINCT ${mediaGridSelectSql("m")} FROM media m ${whereClause} ORDER BY m.id DESC LIMIT ? OFFSET ?`
     )
     .all(...params, PAGE_SIZE, offset) as MediaGridItem[];
 

@@ -35,6 +35,15 @@ export interface MediaGridItem {
   filename: string;
   mime_type: string | null;
   thumb_blurhash: string | null;
+  /** 1 if the item has at least one tag, else 0 (SQLite EXISTS). */
+  has_tags: number;
+}
+
+/** SELECT list for MediaGrid queries, including the tagged flag. */
+export function mediaGridSelectSql(alias?: string): string {
+  const col = alias ? `${alias}.` : "";
+  const idRef = alias ? `${alias}.id` : "id";
+  return `${col}id, ${col}filename, ${col}mime_type, ${col}thumb_blurhash, EXISTS (SELECT 1 FROM media_tags mt WHERE mt.media_id = ${idRef}) AS has_tags`;
 }
 
 export function getMediaById(id: number): MediaRow | null {

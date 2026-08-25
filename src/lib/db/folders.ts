@@ -2,6 +2,7 @@
  * Database helpers for folders table.
  */
 import { getDb } from "./index";
+import { mediaGridSelectSql } from "./media";
 
 export interface FolderRow {
   id: number;
@@ -106,7 +107,7 @@ export function getMediaGridItems(
   const db = getDb();
   const { where, params } = folderMediaWhere(folderId);
   return db
-    .prepare(`SELECT id, filename, mime_type, thumb_blurhash FROM media WHERE ${where} ORDER BY manual_order, filename, id LIMIT ? OFFSET ?`)
+    .prepare(`SELECT ${mediaGridSelectSql()} FROM media WHERE ${where} ORDER BY manual_order, filename, id LIMIT ? OFFSET ?`)
     .all(...params, limit, offset) as import("./media").MediaGridItem[];
 }
 
@@ -391,7 +392,7 @@ export function searchMediaGridItems(options: SearchMediaOptions = {}): { items:
 
   const items = db
     .prepare(
-      `SELECT DISTINCT m.id, m.filename, m.mime_type, m.thumb_blurhash FROM media m ${where} ORDER BY m.id DESC LIMIT ? OFFSET ?`
+      `SELECT DISTINCT ${mediaGridSelectSql("m")} FROM media m ${where} ORDER BY m.id DESC LIMIT ? OFFSET ?`
     )
     .all(...params, limit, offset) as import("./media").MediaGridItem[];
 
