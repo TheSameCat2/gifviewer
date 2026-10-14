@@ -197,8 +197,11 @@ export function clearController(jobId: number): void {
   }
 }
 
-/** Mark orphaned running/paused jobs from a previous process as failed. */
-export function failStaleScanJobs(): void {
+/**
+ * Mark orphaned running/paused jobs from a previous process as failed.
+ * Pass `exceptJobId` to keep the job owned by the live in-process controller.
+ */
+export function failStaleScanJobs(exceptJobId?: number): void {
   const db = getDb();
   db.prepare(
     `UPDATE scan_jobs SET
@@ -206,8 +209,9 @@ export function failStaleScanJobs(): void {
       phase = 'failed',
       completed_at = datetime('now'),
       error_message = COALESCE(error_message, 'Scan interrupted (server restarted)')
-    WHERE status IN ('running', 'paused')`
-  ).run();
+    WHERE status IN ('running', 'paused')
+      AND (? IS NULL OR id != ?)`
+  ).run(exceptJobId ?? null, exceptJobId ?? null);
 }
 
 export function getScanJobById(id: number): ScanProgressSnapshot | null {
@@ -234,9 +238,31 @@ export function getActiveScanJob(): ScanProgressSnapshot | null {
               error_message, started_at, completed_at
        FROM scan_jobs
        WHERE status IN ('running', 'paused')
-       ORDER BY created_at DESC
+       ORDER BY created_at DESC, id DESC
        LIMIT 1`
     )
     .get() as ScanProgressSnapshot | undefined;
-  return row ?? null;
+
+  const controller = getActiveController();
+  if (row && controller?.jobId === row.id) return row;
+
+  // No in-process worker owns this row (typical after a restart). Pause and
+  // resume cannot act on it, so drop it before anyone treats it as active.
+  if (row) {
+    failStaleScanJobs(controller?.jobId);
+  }
+
+  if (!controller) return null;
+
+  const owned = db
+    .prepare(
+      `SELECT id, status, phase, progress_current, progress_total, progress_message,
+              files_found, files_added, files_updated, files_removed,
+              thumbnails_generated, blurhashes_generated,
+              error_message, started_at, completed_at
+       FROM scan_jobs
+       WHERE id = ? AND status IN ('running', 'paused')`
+    )
+    .get(controller.jobId) as ScanProgressSnapshot | undefined;
+  return owned ?? null;
 }
