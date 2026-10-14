@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { Loader2Icon, PauseIcon, PlayIcon, RefreshCwIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -51,7 +51,10 @@ export function ScanLibraryButton({ currentFolder }: ScanLibraryButtonProps) {
   const [active, setActive] = useState<ActiveScan | null>(null);
   const [result, setResult] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
-  const [seenJobId, setSeenJobId] = useState<number | null>(null);
+  // Job we started or discovered via polling. A ref so a scan already running
+  // when this page mounts is recorded before the completion check, including
+  // on the poll that first observes it has finished.
+  const seenJobId = useRef<number | null>(null);
 
   const refreshStatus = useCallback(async () => {
     try {
@@ -60,28 +63,33 @@ export function ScanLibraryButton({ currentFolder }: ScanLibraryButtonProps) {
       const next = (data.active as ActiveScan | null) ?? null;
       setActive(next);
 
-      // Detect completion of a job we started / were watching
-      if (!next && seenJobId !== null) {
-        const job = (data.jobs as Array<ActiveScan & { status: string }>)?.find(
-          (j) => j.id === seenJobId
+      if (next) {
+        seenJobId.current = next.id;
+        return;
+      }
+
+      const watchedId = seenJobId.current;
+      if (watchedId === null) return;
+
+      const job = (data.jobs as Array<ActiveScan & { status: string }>)?.find(
+        (j) => j.id === watchedId
+      );
+      if (job?.status === "completed") {
+        setResult(
+          `Scanned: ${job.files_found} files. Added: ${job.files_added}. ` +
+            `Updated: ${job.files_updated}. Removed: ${job.files_removed}.`
         );
-        if (job?.status === "completed") {
-          setResult(
-            `Scanned: ${job.files_found} files. Added: ${job.files_added}. ` +
-              `Updated: ${job.files_updated}. Removed: ${job.files_removed}.`
-          );
-          setSeenJobId(null);
-          window.location.href =
-            window.location.pathname + (currentFolder ? `?folder=${currentFolder}` : "");
-        } else if (job?.status === "failed") {
-          setResult(`Scan failed: ${job.error_message ?? "unknown error"}`);
-          setSeenJobId(null);
-        }
+        seenJobId.current = null;
+        window.location.href =
+          window.location.pathname + (currentFolder ? `?folder=${currentFolder}` : "");
+      } else if (job?.status === "failed") {
+        setResult(`Scan failed: ${job.error_message ?? "unknown error"}`);
+        seenJobId.current = null;
       }
     } catch {
       // ignore transient poll errors
     }
-  }, [currentFolder, seenJobId]);
+  }, [currentFolder]);
 
   useEffect(() => {
     void refreshStatus();
@@ -108,7 +116,7 @@ export function ScanLibraryButton({ currentFolder }: ScanLibraryButtonProps) {
       if (!data.success) {
         setResult(`Scan failed: ${data.error ?? "unknown error"}`);
       } else if (data.jobId) {
-        setSeenJobId(data.jobId);
+        seenJobId.current = data.jobId;
       }
       await refreshStatus();
     } catch (e) {
